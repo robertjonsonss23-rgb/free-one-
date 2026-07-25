@@ -539,12 +539,12 @@ export function SchedulePreview({
               <YAxis stroke="#cbd5e1" tick={{ fill: "#475569", fontSize: 13, fontWeight: 600 }} width={60} axisLine={false} tickLine={false} />
               <Tooltip content={<SteppedTooltip />} />
               <Legend wrapperStyle={{ fontSize: "14px", color: "#1e293b", paddingTop: 12, fontWeight: 600 }} iconType="circle" />
-              <Line type="basis" dataKey="views" stroke={COLORS.views} strokeWidth={3} dot={false} name="Views" isAnimationActive animationDuration={900} />
-              <Line type="basis" dataKey="likes" stroke={COLORS.likes} strokeWidth={2.5} dot={false} name="Likes" isAnimationActive animationDuration={900} />
-              <Line type="basis" dataKey="shares" stroke={COLORS.shares} strokeWidth={2.5} dot={false} name="Shares" isAnimationActive animationDuration={900} />
-              <Line type="basis" dataKey="saves" stroke={COLORS.saves} strokeWidth={2.5} dot={false} name="Saves" isAnimationActive animationDuration={900} />
-              <Line type="basis" dataKey="reposts" stroke={COLORS.reposts} strokeWidth={2.5} dot={false} name="Reposts" isAnimationActive animationDuration={900} />
-              <Line type="basis" dataKey="comments" stroke={COLORS.comments} strokeWidth={2.5} dot={false} name="Comments" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="views" stroke={COLORS.views} strokeWidth={3} dot={false} name="Views" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="likes" stroke={COLORS.likes} strokeWidth={2.5} dot={false} name="Likes" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="shares" stroke={COLORS.shares} strokeWidth={2.5} dot={false} name="Shares" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="saves" stroke={COLORS.saves} strokeWidth={2.5} dot={false} name="Saves" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="reposts" stroke={COLORS.reposts} strokeWidth={2.5} dot={false} name="Reposts" isAnimationActive animationDuration={900} />
+              <Line type="monotone" dataKey="comments" stroke={COLORS.comments} strokeWidth={2.5} dot={false} name="Comments" isAnimationActive animationDuration={900} />
             </LineChart>
           </ResponsiveContainer>
         )}
