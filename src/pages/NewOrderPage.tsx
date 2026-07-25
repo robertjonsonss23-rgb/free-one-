@@ -82,12 +82,14 @@ export function NewOrderPage({
   onNavigateToWallet,
   onBalanceChange,
 }: NewOrderPageProps) {
-  const effectiveRatios = activeRatios ?? DEFAULT_ENGAGEMENT_RATIOS;
-  const ratiosAreCustom =
-    !!activeRatios &&
-    (Object.keys(effectiveRatios) as (keyof EngagementRatios)[]).some(
-      (k) => effectiveRatios[k] !== DEFAULT_ENGAGEMENT_RATIOS[k]
-    );
+  // Baseline comes from the Ratios page; the sliders below let the user
+  // tune this one order without changing their saved preset.
+  const baseRatios = activeRatios ?? DEFAULT_ENGAGEMENT_RATIOS;
+  const [ratioOverrides, setRatioOverrides] = useState<EngagementRatios>(baseRatios);
+  const effectiveRatios = ratioOverrides;
+  const ratiosAreCustom = (Object.keys(effectiveRatios) as (keyof EngagementRatios)[]).some(
+    (k) => effectiveRatios[k] !== DEFAULT_ENGAGEMENT_RATIOS[k]
+  );
   const prefillRuns = prefillOrder?.runs || [];
   const prefillPlan: PatternPlan | null = prefillOrder
     ? {
@@ -763,6 +765,72 @@ export function NewOrderPage({
           })}
         </div>
 
+        {/* ---- Amount sliders: tune each engagement type for THIS order ---- */}
+        {(includeLikes || includeShares || includeSaves || includeReposts || includeComments) && (
+          <div className="mt-4 rounded-xl border-2 border-amber-100 bg-amber-50/40 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-bold text-slate-900">Amounts</p>
+                <p className="text-[10px] font-medium text-slate-500">
+                  Percentage of total views. Drag to change how much of each you get.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setUseClonedPlan(false); setRatioOverrides(baseRatios); }}
+                className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-bold text-amber-700 transition hover:bg-amber-50"
+              >
+                Reset
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {([
+                { key: "likes"    as const, label: "Likes",    emoji: "❤️", on: includeLikes,    max: 25, accent: "accent-pink-600" },
+                { key: "shares"   as const, label: "Shares",   emoji: "🔁", on: includeShares,   max: 15, accent: "accent-sky-600" },
+                { key: "saves"    as const, label: "Saves",    emoji: "🔖", on: includeSaves,    max: 10, accent: "accent-violet-600" },
+                { key: "reposts"  as const, label: "Reposts",  emoji: "📢", on: includeReposts,  max: 10, accent: "accent-cyan-600" },
+                { key: "comments" as const, label: "Comments", emoji: "💬", on: includeComments, max: 2,  accent: "accent-amber-600" },
+              ]).filter((row) => row.on).map((row) => {
+                const pct = effectiveRatios[row.key];
+                const units = Math.max(0, Math.floor((totalViews * pct) / 100));
+                return (
+                  <div key={row.key}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                        <span>{row.emoji}</span>{row.label}
+                      </span>
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="text-[11px] font-extrabold tabular-nums text-slate-900">
+                          {units.toLocaleString()}
+                        </span>
+                        <span className="text-[10px] font-semibold tabular-nums text-slate-500">
+                          {pct.toFixed(2)}%
+                        </span>
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={row.max}
+                      step={0.05}
+                      value={pct}
+                      onChange={(e) => {
+                        setUseClonedPlan(false);
+                        setRatioOverrides((prev) => ({
+                          ...prev,
+                          [row.key]: Number(e.target.value),
+                        }));
+                      }}
+                      className={`h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-200 ${row.accent}`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {includeComments && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
@@ -1211,15 +1279,8 @@ function IamTooltip({ active, payload, label }: any) {
   const filtered = payload.filter((e: any) => !String(e.name || "").startsWith("planned-"));
   if (filtered.length === 0) return null;
   return (
-    <div style={{
-      background: "#ffffff",
-      border: "1px solid rgba(210, 180, 140, 0.55)",
-      borderRadius: "0.75rem",
-      color: "#27211b",
-      fontSize: "12px",
-      padding: "8px 12px",
-    }}>
-              <p style={{ marginBottom: 4, color: "#9a8f84" }}>{label}</p>
+    <div className="chart-tooltip rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 shadow-lg">
+              <p className="chart-tooltip-label mb-1 text-slate-500">{label}</p>
               {filtered.map((e: any) => {
                 let displayValue = e.value;
                 if (e.dataKey === "likesVisual") displayValue = e.payload.likesActual;
