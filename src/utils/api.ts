@@ -27,6 +27,10 @@ interface CreateOrderResult {
   status?: string;
   completedRuns?: number;
   message?: string;
+  /** Amount debited from the wallet, in rupees. */
+  charged?: number;
+  /** Wallet balance after the debit, in rupees. */
+  balance?: number;
   raw?: unknown;
 }
 
@@ -245,6 +249,8 @@ export async function createSmmOrder(payload: CreateOrderPayload): Promise<Creat
       schedulerOrderId,
       status: typeof payloadObject?.status === "string" ? payloadObject.status : undefined,
       completedRuns: typeof payloadObject?.completedRuns === "number" ? payloadObject.completedRuns : undefined,
+      charged: typeof payloadObject?.charged === "number" ? payloadObject.charged : undefined,
+      balance: typeof payloadObject?.balance === "number" ? payloadObject.balance : undefined,
       raw: payloadObject,
     };
   }
@@ -748,6 +754,8 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  /** Wallet balance in rupees. */
+  balance: number;
   createdAt?: string;
 }
 
@@ -762,6 +770,7 @@ function normalizeUser(raw: unknown): AuthUser {
     id: String(o.id ?? ""),
     email: String(o.email ?? ""),
     name: String(o.name ?? ""),
+    balance: Number(o.balance) || 0,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
   };
 }
@@ -889,9 +898,11 @@ export interface QuoteResult {
   total: number;
   breakdown: Partial<Record<ServiceLabel, number>>;
   currency: string;
-  nativeTotal: number;
-  exchangeRateToInr: number;
   partial?: boolean;
+  /** Wallet balance at the time of quoting. */
+  balance: number;
+  /** True when the balance covers the total. */
+  sufficient: boolean;
 }
 
 export async function fetchQuote(
@@ -908,9 +919,9 @@ export async function fetchQuote(
     total: Number(payload.total) || 0,
     breakdown: (payload.breakdown || {}) as Partial<Record<ServiceLabel, number>>,
     currency: String(payload.currency || "INR"),
-    nativeTotal: Number(payload.nativeTotal) || 0,
-    exchangeRateToInr: Number(payload.exchangeRateToInr) || 1,
     partial: payload.partial === true,
+    balance: Number(payload.balance) || 0,
+    sufficient: payload.sufficient === true,
   };
 }
 
@@ -1022,4 +1033,136 @@ export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
         typeof raw.lastUpdatedAt === "string" ? raw.lastUpdatedAt : new Date().toISOString(),
     } satisfies CreatedOrder;
   });
+}
+
+/* ============================================================
+   WALLET
+   ============================================================ */
+
+export interface WalletTransaction {
+  id: string;
+  type: "deposit" | "order_debit" | "refund" | "admin_credit" | "admin_debit";
+  amount: number;          // rupees; negative = debit
+  balanceAfter: number;
+  note: string;
+  reference: string;
+  createdAt: string;
+}
+
+export interface DepositRecord {
+  id: string;
+  amount: number;
+  method: "upi" | "crypto";
+  reference: string;
+  status: "pending" | "approved" | "rejected";
+  adminNote: string;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface WalletData {
+  balance: number;
+  transactions: WalletTransaction[];
+  deposits: DepositRecord[];
+}
+
+export interface UpiMethod {
+  id: string;
+  label: string;
+  upiId: string;
+  payeeName: string;
+  instructions: string;
+}
+
+export interface CryptoMethod {
+  id: string;
+  label: string;
+  network: string;
+  address: string;
+  instructions: string;
+}
+
+export interface PaymentMethods {
+  minDeposit: number;
+  upiEnabled: boolean;
+  cryptoEnabled: boolean;
+  upiMethods: UpiMethod[];
+  cryptoMethods: CryptoMethod[];
+}
+
+export async function fetchWallet(): Promise<WalletData> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/wallet`, { method: "GET" });
+  const payload = await parseOrThrow(response);
+  return {
+    balance: Number(payload.balance) || 0,
+    transactions: (Array.isArray(payload.transactions) ? payload.transactions : []).map((t) => {
+      const o = t as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        type: String(o.type ?? "") as WalletTransaction["type"],
+        amount: Number(o.amount) || 0,
+        balanceAfter: Number(o.balanceAfter) || 0,
+        note: String(o.note ?? ""),
+        reference: String(o.reference ?? ""),
+        createdAt: String(o.createdAt ?? ""),
+      };
+    }),
+    deposits: (Array.isArray(payload.deposits) ? payload.deposits : []).map((d) => {
+      const o = d as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        amount: Number(o.amount) || 0,
+        method: (String(o.method ?? "upi") as "upi" | "crypto"),
+        reference: String(o.reference ?? ""),
+        status: String(o.status ?? "pending") as DepositRecord["status"],
+        adminNote: String(o.adminNote ?? ""),
+        createdAt: String(o.createdAt ?? ""),
+        reviewedAt: typeof o.reviewedAt === "string" ? o.reviewedAt : null,
+      };
+    }),
+  };
+}
+
+export async function fetchPaymentMethods(): Promise<PaymentMethods> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/payment-methods`);
+  const payload = await parseOrThrow(response);
+  return {
+    minDeposit: Number(payload.minDeposit) || 50,
+    upiEnabled: Boolean(payload.upiEnabled),
+    cryptoEnabled: Boolean(payload.cryptoEnabled),
+    upiMethods: (Array.isArray(payload.upiMethods) ? payload.upiMethods : []).map((m) => {
+      const o = m as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        label: String(o.label ?? ""),
+        upiId: String(o.upiId ?? ""),
+        payeeName: String(o.payeeName ?? ""),
+        instructions: String(o.instructions ?? ""),
+      };
+    }),
+    cryptoMethods: (Array.isArray(payload.cryptoMethods) ? payload.cryptoMethods : []).map((m) => {
+      const o = m as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        label: String(o.label ?? ""),
+        network: String(o.network ?? ""),
+        address: String(o.address ?? ""),
+        instructions: String(o.instructions ?? ""),
+      };
+    }),
+  };
+}
+
+export async function submitDeposit(payload: {
+  amount: number;
+  method: "upi" | "crypto";
+  methodId: string;
+  reference: string;
+}): Promise<{ message: string }> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/wallet/deposit`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const result = await parseOrThrow(response);
+  return { message: String(result.message || "Submitted for verification.") };
 }
