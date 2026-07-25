@@ -568,3 +568,95 @@ tbody tr:hover {
 .safe-top {
   padding-top: env(safe-area-inset-top);
 }
+
+/* ============================================ */
+/* DARK THEME                                   */
+/* Tailwind v4 compiles every colour utility to */
+/* var(--color-*), so re-pointing those vars    */
+/* themes the whole app without touching any    */
+/* component markup.                            */
+/* ============================================ */
+.dark {
+  color-scheme: dark;
+
+  /* Slate is the app's neutral ramp — invert it so light surfaces
+     become dark ones and dark text becomes light. */
+  --color-white:      #10151f;   /* "white" cards -> dark panels   */
+  --color-slate-50:   #0b0f17;   /* page background                */
+  --color-slate-100:  #161c28;
+  --color-slate-200:  #232b3a;   /* borders                        */
+  --color-slate-300:  #323c4f;
+  --color-slate-400:  #6b7789;
+  --color-slate-500:  #8c98aa;
+  --color-slate-600:  #aab4c4;   /* secondary text                 */
+  --color-slate-700:  #c6cedb;
+  --color-slate-800:  #dde3ec;
+  --color-slate-900:  #eef2f7;   /* primary text                   */
+  --color-slate-950:  #f8fafc;
+
+  /* Tint families: lift the 50/100 steps off pure-white so coloured
+     chips stay readable instead of glowing. */
+  --color-indigo-50:  #1c2140;
+  --color-indigo-100: #262c52;
+  --color-indigo-700: #a5b4fc;
+  --color-indigo-900: #c7d2fe;
+
+  --color-emerald-50: #10261d;
+  --color-emerald-100:#16362a;
+  --color-emerald-700:#6ee7b7;
+  --color-emerald-900:#a7f3d0;
+
+  --color-rose-50:    #2b1620;
+  --color-rose-100:   #3d1d2b;
+  --color-rose-700:   #fda4af;
+  --color-rose-900:   #fecdd3;
+
+  --color-amber-50:   #2a2113;
+  --color-amber-100:  #3a2d18;
+  --color-amber-700:  #fcd34d;
+  --color-amber-900:  #fde68a;
+  --color-amber-950:  #fef3c7;
+
+  --color-sky-50:     #12222f;
+  --color-sky-100:    #17303f;
+  --color-sky-700:    #7dd3fc;
+  --color-sky-900:    #bae6fd;
+
+  --color-violet-50:  #201740;
+  --color-violet-100: #2b1f55;
+  --color-violet-700: #c4b5fd;
+
+  --color-cyan-100:   #16323a;
+  --color-cyan-700:   #67e8f9;
+  --color-pink-100:   #3a1a2a;
+  --color-pink-700:   #f9a8d4;
+
+  /* App-level tokens declared in :root */
+  --bg: #0b0f17;
+  --surface: #10151f;
+  --border: #232b3a;
+  --border-strong: #323c4f;
+  --text-primary: #eef2f7;
+  --text-secondary: #aab4c4;
+  --text-muted: #8c98aa;
+  --text-faint: #6b7789;
+  --brand-soft: #1c2140;
+}
+
+/* Keep gradient hero panels readable — they use fixed brand colours. */
+.dark .bg-gradient-to-br.from-indigo-600,
+.dark .bg-gradient-to-r.from-indigo-600 {
+  --tw-gradient-from: #4f46e5;
+  --tw-gradient-to: #7c3aed;
+}
+
+/* Shadows read as haze on dark backgrounds; deepen them instead. */
+.dark .shadow-xl,
+.dark .shadow-lg {
+  --tw-shadow-color: rgb(0 0 0 / 0.5);
+}
+
+/* Smooth the switch without animating every property on the page. */
+html.theme-ready body {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
