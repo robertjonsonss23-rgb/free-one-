@@ -11,7 +11,8 @@ import type {
   RunStatus,
 } from "./types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
-import { updateOrderControl, fetchOrderStatus } from "./utils/api";
+import { updateOrderControl, fetchOrderStatus, logout, type AuthUser } from "./utils/api";
+import { Button } from "./components/ui";
 import { cn } from "./utils/cn";
 
 type NavKey =
@@ -129,7 +130,12 @@ function hydrateOrderDates(orders: CreatedOrder[]): CreatedOrder[] {
   });
 }
 
-export default function App() {
+interface AppProps {
+  user: AuthUser;
+  onSignOut: () => void;
+}
+
+export default function App({ user, onSignOut }: AppProps) {
   const [activePage, setActivePage] = useState<NavKey>(() => {
     const saved = localStorage.getItem("dev-smm-active-page");
     if (
@@ -553,6 +559,28 @@ export default function App() {
               <p className="text-[11px] font-medium text-slate-600">Auto-sync</p>
               <p className="text-[11px] text-slate-500">Every 5 minutes</p>
             </div>
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <p className="truncate text-[11px] font-semibold text-indigo-900" title={user.email}>
+                {user.name || user.email}
+              </p>
+              {user.name && (
+                <p className="truncate text-[10px] text-indigo-600" title={user.email}>
+                  {user.email}
+                </p>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth
+              onClick={async () => {
+                if (!window.confirm("Sign out of TRUESMM?")) return;
+                await logout();
+                onSignOut();
+              }}
+            >
+              Sign out
+            </Button>
           </div>
         </aside>
 
