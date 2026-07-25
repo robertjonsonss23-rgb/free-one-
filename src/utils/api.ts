@@ -761,3 +761,148 @@ export async function setUserActive(
   });
   await parseOrThrow(response);
 }
+
+/* ============================================================
+   PRICE QUOTE (calculated server-side; rates need the admin API key)
+   ============================================================ */
+
+export interface QuoteResult {
+  available: boolean;
+  reason?: string;
+  total: number;
+  breakdown: Partial<Record<ServiceLabel, number>>;
+  currency: string;
+  nativeTotal: number;
+  exchangeRateToInr: number;
+  partial?: boolean;
+}
+
+export async function fetchQuote(
+  services: Partial<Record<ServiceLabel, number>>
+): Promise<QuoteResult> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/quote`, {
+    method: "POST",
+    body: JSON.stringify({ services }),
+  });
+  const payload = await parseOrThrow(response);
+  return {
+    available: payload.available === true,
+    reason: typeof payload.reason === "string" ? payload.reason : undefined,
+    total: Number(payload.total) || 0,
+    breakdown: (payload.breakdown || {}) as Partial<Record<ServiceLabel, number>>,
+    currency: String(payload.currency || "INR"),
+    nativeTotal: Number(payload.nativeTotal) || 0,
+    exchangeRateToInr: Number(payload.exchangeRateToInr) || 1,
+    partial: payload.partial === true,
+  };
+}
+
+/* ============================================================
+   REBUILD LOCAL ORDERS FROM THE SERVER
+   Orders live in MongoDB against the signed-in account, so a user
+   who logs in on a new device has nothing in localStorage. This
+   reconstructs the shape the UI expects from the server payload.
+   ============================================================ */
+
+import type { CreatedOrder, RunStep, RunStatus, OrderStatus } from "../types/order";
+
+function toRunStatus(value: string): RunStatus {
+  switch (value) {
+    case "completed": return "completed";
+    case "cancelled": return "cancelled";
+    case "failed":    return "failed";
+    case "processing":return "pending";
+    default:          return "pending";
+  }
+}
+
+function toOrderStatus(value: string): OrderStatus {
+  switch (value) {
+    case "completed": return "completed";
+    case "cancelled": return "cancelled";
+    case "failed":    return "failed";
+    case "paused":    return "paused";
+    case "running":
+    case "processing":
+    case "pending":   return "running";
+    default:          return "running";
+  }
+}
+
+/**
+ * Fetch every order for the signed-in user and convert it into the
+ * CreatedOrder shape the UI renders.
+ */
+export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
+  const payload = await fetchAllOrdersStatus();
+  const rows = Array.isArray(payload.orders) ? payload.orders : [];
+
+  return rows.map((row) => {
+    const raw = row as unknown as Record<string, unknown>;
+    const runs = Array.isArray(row.runs) ? row.runs : [];
+
+    // Only VIEWS runs drive the timeline; the others ride along with them.
+    const viewRuns = runs.filter((r) => String(r.label).toUpperCase() === "VIEWS");
+    const timeline = viewRuns.length > 0 ? viewRuns : runs;
+
+    const sorted = [...timeline].sort(
+      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+    );
+
+    const sumLabel = (label: string) =>
+      runs
+        .filter((r) => String(r.label).toUpperCase() === label)
+        .reduce((total, r) => total + (Number(r.quantity) || 0), 0);
+
+    let cumulative = 0;
+    const firstAt = sorted.length ? new Date(sorted[0].time).getTime() : Date.now();
+
+    const runSteps: RunStep[] = sorted.map((r, index) => {
+      const views = Number(r.quantity) || 0;
+      cumulative += views;
+      const at = new Date(r.time);
+      return {
+        run: index + 1,
+        at,
+        minutesFromStart: Math.max(0, Math.round((at.getTime() - firstAt) / 60000)),
+        views,
+        likes: 0, shares: 0, saves: 0, comments: 0, reposts: 0,
+        cumulativeViews: cumulative,
+        cumulativeLikes: 0, cumulativeShares: 0, cumulativeSaves: 0,
+        cumulativeComments: 0, cumulativeReposts: 0,
+      };
+    });
+
+    const runStatuses = sorted.map((r) => toRunStatus(String(r.status)));
+    const totalViews = sumLabel("VIEWS");
+
+    return {
+      id: String(raw.schedulerOrderId || raw._id || ""),
+      name: String(raw.name || "Order"),
+      schedulerOrderId: String(raw.schedulerOrderId || ""),
+      smmOrderId: String(sorted.find((r) => r.smmOrderId)?.smmOrderId ?? "Scheduled"),
+      link: String(raw.link || ""),
+      totalViews,
+      startDelayHours: 0,
+      patternType: "manual",
+      patternName: "Scheduled",
+      runs: runSteps,
+      engagement: {
+        likes: sumLabel("LIKES"),
+        shares: sumLabel("SHARES"),
+        saves: sumLabel("SAVES"),
+        comments: sumLabel("COMMENTS"),
+        reposts: sumLabel("REPOSTS"),
+      },
+      serviceId: "",
+      selectedAPI: null,
+      selectedBundle: "",
+      status: toOrderStatus(String(raw.status || "")),
+      completedRuns: runStatuses.filter((s) => s === "completed").length,
+      runStatuses,
+      createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
+      lastUpdatedAt:
+        typeof raw.lastUpdatedAt === "string" ? raw.lastUpdatedAt : new Date().toISOString(),
+    } satisfies CreatedOrder;
+  });
+}
