@@ -10,7 +10,7 @@ import type {
   QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
-import { createSmmOrder, fetchPanelConfig, BACKEND_BASE_URL, type PanelConfig } from "../utils/api"; 
+import { createSmmOrder, fetchPanelConfig, fetchQuote, BACKEND_BASE_URL, type PanelConfig, type QuoteResult } from "../utils/api"; 
 import { createPatternPlan } from "../utils/patterns";
 import {
   Button,
@@ -126,6 +126,8 @@ export function NewOrderPage({
   const [minViewsPerRun, setMinViewsPerRun] = useState(10);
   const [panelConfig, setPanelConfig] = useState<PanelConfig | null>(null);
   const [panelConfigError, setPanelConfigError] = useState("");
+  const [quote, setQuote] = useState<QuoteResult | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [startDelayHours, setStartDelayHours] = useState(prefillOrder?.startDelayHours ?? 0);
   const [includeLikes, setIncludeLikes] = useState((prefillOrder?.engagement.likes ?? 0) > 0);
   const [includeShares, setIncludeShares] = useState((prefillOrder?.engagement.shares ?? 0) > 0);
@@ -347,6 +349,34 @@ export function NewOrderPage({
 
   const estimatedRunCount = safePlan.runs.length;
   const averageViewsPerRun = estimatedRunCount > 0 ? Math.round(totalViews / estimatedRunCount) : 0;
+
+  /* Ask the server to price this plan. Rates live behind the admin API key,
+     so the maths happens server-side and only totals come back.
+     Debounced because the plan changes on every slider tweak. */
+  const quotePayload = useMemo(() => ({
+    views: safePlan.runs.reduce((sum, r) => sum + Math.max(Math.floor(r.views || 0), minViewsPerRun), 0),
+    likes: includeLikes ? graphTotals.likes : 0,
+    shares: includeShares ? graphTotals.shares : 0,
+    saves: includeSaves ? graphTotals.saves : 0,
+    reposts: includeReposts ? graphTotals.reposts : 0,
+    comments: includeComments ? graphTotals.comments : 0,
+  }), [safePlan.runs, minViewsPerRun, graphTotals, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
+
+  useEffect(() => {
+    if (!panelConfig?.configured || quotePayload.views <= 0) {
+      setQuote(null);
+      return;
+    }
+    let cancelled = false;
+    setQuoteLoading(true);
+    const timer = setTimeout(() => {
+      fetchQuote(quotePayload)
+        .then((result) => { if (!cancelled) setQuote(result); })
+        .catch(() => { if (!cancelled) setQuote(null); })
+        .finally(() => { if (!cancelled) setQuoteLoading(false); });
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); setQuoteLoading(false); clearTimeout(timer); };
+  }, [quotePayload, panelConfig?.configured]);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-3 py-4 sm:px-5 sm:py-6">
@@ -772,9 +802,59 @@ export function NewOrderPage({
 
           <div className="px-3 sm:px-4 py-3 bg-gradient-to-r from-slate-50 to-indigo-50/30 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1 min-w-0">
-              {estimatedRunCount > 0 ? (
+              {estimatedRunCount > 0 && quote?.available ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Scheduled</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    Estimated cost
+                  </span>
+                  <span className="text-2xl sm:text-3xl font-extrabold text-indigo-700 tabular-nums">
+                    ₹{quote.total.toFixed(2)}
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {quote.breakdown.views != null && (
+                      <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                        Views ₹{quote.breakdown.views.toFixed(0)}
+                      </span>
+                    )}
+                    {quote.breakdown.likes != null && (
+                      <span className="inline-flex items-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
+                        ❤️ ₹{quote.breakdown.likes.toFixed(0)}
+                      </span>
+                    )}
+                    {quote.breakdown.shares != null && (
+                      <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                        🔁 ₹{quote.breakdown.shares.toFixed(0)}
+                      </span>
+                    )}
+                    {quote.breakdown.saves != null && (
+                      <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+                        🔖 ₹{quote.breakdown.saves.toFixed(0)}
+                      </span>
+                    )}
+                    {quote.breakdown.reposts != null && (
+                      <span className="inline-flex items-center rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
+                        📢 ₹{quote.breakdown.reposts.toFixed(0)}
+                      </span>
+                    )}
+                    {quote.breakdown.comments != null && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                        💬 ₹{quote.breakdown.comments.toFixed(0)}
+                      </span>
+                    )}
+                  </div>
+                  <p className="w-full text-[10px] font-semibold text-slate-500">
+                    {quote.currency !== "INR"
+                      ? `${quote.nativeTotal.toFixed(4)} ${quote.currency} at 1 ${quote.currency} = ₹${quote.exchangeRateToInr.toFixed(4)} · `
+                      : ""}
+                    {totalViews.toLocaleString()} views over {estimatedRunCount} runs
+                    {quote.partial ? " · some rates unavailable" : ""}
+                  </p>
+                </div>
+              ) : estimatedRunCount > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    {quoteLoading ? "Calculating cost…" : "Scheduled"}
+                  </span>
                   <span className="text-2xl sm:text-3xl font-extrabold text-indigo-700 tabular-nums">
                     {totalViews.toLocaleString()}
                   </span>
