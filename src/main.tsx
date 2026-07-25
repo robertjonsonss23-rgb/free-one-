@@ -4,7 +4,7 @@ import "./index.css";
 import App from "./App.tsx";
 import { AdminPage } from "./pages/AdminPage.tsx";
 import { AuthPage } from "./pages/AuthPage.tsx";
-import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx"; 
 import { Spinner } from "./components/ui.tsx";
 import {
   fetchCurrentUser,
