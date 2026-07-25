@@ -19,7 +19,10 @@ import {
   setStoredAdminPassword,
   clearStoredAdminPassword,
   type PanelConfig,
+  fetchAdminUsers,
+  setUserActive,
   type ServiceLabel,
+  type AdminUser,
 } from "../utils/api";
 
 const LABEL_META: Record<ServiceLabel, { title: string; hint: string; required?: boolean }> = {
@@ -56,6 +59,11 @@ export function AdminPage() {
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
+
+  const [tab, setTab] = useState<"panel" | "users">("panel");
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState("");
 
   const fireToast = (kind: "success" | "danger", msg: string) => {
     setToast({ kind, msg });
@@ -134,6 +142,30 @@ export function AdminPage() {
       setServices([]);
     } finally {
       setServicesLoading(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    setUsersLoading(true);
+    setUsersError("");
+    try {
+      setUsers(await fetchAdminUsers(password));
+    } catch (e) {
+      setUsersError(e instanceof Error ? e.message : "Could not load users.");
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const toggleUser = async (u: AdminUser) => {
+    const next = !u.isActive;
+    if (!next && !confirm(`Disable ${u.email}? They will be signed out immediately.`)) return;
+    try {
+      await setUserActive(password, u.id, next);
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, isActive: next } : x)));
+      fireToast("success", next ? "Account enabled." : "Account disabled.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Update failed.");
     }
   };
 
@@ -255,163 +287,249 @@ export function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-5">
+        <div className="grid w-full max-w-xs grid-cols-2 gap-1 rounded-lg bg-slate-200/70 p-1">
+          <button
+            type="button"
+            onClick={() => setTab("panel")}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+              tab === "panel" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+            }`}
+          >
+            Panel
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("users"); if (users.length === 0) loadUsers(); }}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+              tab === "users" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+            }`}
+          >
+            Users
+          </button>
+        </div>
+
         {toast && (
           <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
             <InfoBanner kind={toast.kind === "success" ? "success" : "danger"}>{toast.msg}</InfoBanner>
           </motion.div>
         )}
 
-        {config && (
-          <InfoBanner kind={config.configured ? "success" : "warning"}>
-            {config.configured
-              ? `Live — users can place orders against "${config.panelName || config.apiUrl}".`
-              : "Not configured yet. Set the panel URL, API key and at least a Views service id."}
-          </InfoBanner>
-        )}
-
-        {/* ---- Panel credentials ---- */}
-        <Card>
-          <div className="mb-4">
-            <h2 className="text-base font-semibold text-slate-900">SMM panel</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              These credentials stay on the server. Users never see or send them.
-            </p>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="Panel name"
-              value={panelName}
-              onChange={(e) => setPanelName(e.target.value)}
-              placeholder="My SMM Provider"
-            />
-            <Input
-              label="API URL"
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="https://panel.example.com/api/v2"
-            />
-          </div>
-
-          <div className="mt-4">
-            <Input
-              label="API key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={config?.hasApiKey ? `Saved (${config.apiKeyMask}) — leave blank to keep` : "Paste the panel API key"}
-              hint={config?.hasApiKey
-                ? "A key is already stored. Type a new one only if you want to replace it."
-                : "Required the first time."}
-            />
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={handleLoadServices} loading={servicesLoading}>
-              Load services from panel
-            </Button>
-            {services.length > 0 && (
-              <span className="self-center text-xs font-medium text-slate-500">
-                {services.length} services loaded
-              </span>
-            )}
-          </div>
-
-          {servicesError && (
-            <div className="mt-3">
-              <InfoBanner kind="danger">{servicesError}</InfoBanner>
-            </div>
+        {tab === "panel" && (
+          <>
+          {config && (
+            <InfoBanner kind={config.configured ? "success" : "warning"}>
+              {config.configured
+                ? `Live — users can place orders against "${config.panelName || config.apiUrl}".`
+                : "Not configured yet. Set the panel URL, API key and at least a Views service id."}
+            </InfoBanner>
           )}
-        </Card>
 
-        {/* ---- Service ids ---- */}
-        <Card>
-          <div className="mb-4">
-            <h2 className="text-base font-semibold text-slate-900">Service IDs</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Map each engagement type to a service on the panel. Leave one blank to
-              disable it — users won't be able to order it.
-            </p>
-          </div>
+          {/* ---- Panel credentials ---- */}
+          <Card>
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-slate-900">SMM panel</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                These credentials stay on the server. Users never see or send them.
+              </p>
+            </div>
 
-          <div className="space-y-3">
-            {SERVICE_LABELS.map((label) => {
-              const meta = LABEL_META[label];
-              const current = serviceIds[label];
-              const match = current ? serviceById.get(current) : undefined;
-              return (
-                <div
-                  key={label}
-                  className="rounded-lg border border-slate-200 p-3 sm:flex sm:items-center sm:gap-4"
-                >
-                  <div className="sm:w-32">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-900">{meta.title}</span>
-                      {meta.required && (
-                        <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
-                          REQUIRED
-                        </span>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Panel name"
+                value={panelName}
+                onChange={(e) => setPanelName(e.target.value)}
+                placeholder="My SMM Provider"
+              />
+              <Input
+                label="API URL"
+                value={apiUrl}
+                onChange={(e) => setApiUrl(e.target.value)}
+                placeholder="https://panel.example.com/api/v2"
+              />
+            </div>
+
+            <div className="mt-4">
+              <Input
+                label="API key"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={config?.hasApiKey ? `Saved (${config.apiKeyMask}) — leave blank to keep` : "Paste the panel API key"}
+                hint={config?.hasApiKey
+                  ? "A key is already stored. Type a new one only if you want to replace it."
+                  : "Required the first time."}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={handleLoadServices} loading={servicesLoading}>
+                Load services from panel
+              </Button>
+              {services.length > 0 && (
+                <span className="self-center text-xs font-medium text-slate-500">
+                  {services.length} services loaded
+                </span>
+              )}
+            </div>
+
+            {servicesError && (
+              <div className="mt-3">
+                <InfoBanner kind="danger">{servicesError}</InfoBanner>
+              </div>
+            )}
+          </Card>
+
+          {/* ---- Service ids ---- */}
+          <Card>
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-slate-900">Service IDs</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Map each engagement type to a service on the panel. Leave one blank to
+                disable it — users won't be able to order it.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {SERVICE_LABELS.map((label) => {
+                const meta = LABEL_META[label];
+                const current = serviceIds[label];
+                const match = current ? serviceById.get(current) : undefined;
+                return (
+                  <div
+                    key={label}
+                    className="rounded-lg border border-slate-200 p-3 sm:flex sm:items-center sm:gap-4"
+                  >
+                    <div className="sm:w-32">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-900">{meta.title}</span>
+                        {meta.required && (
+                          <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                            REQUIRED
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500">{meta.hint}</p>
+                    </div>
+
+                    <div className="mt-2 flex-1 sm:mt-0">
+                      <input
+                        value={current}
+                        onChange={(e) =>
+                          setServiceIds((prev) => ({ ...prev, [label]: e.target.value.trim() }))
+                        }
+                        placeholder="Service ID (e.g. 1234)"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                      />
+                      {match && (
+                        <p className="mt-1 truncate text-[11px] text-emerald-700">
+                          ✓ {match.name} — rate {match.rate} / min {match.min} / max {match.max}
+                        </p>
+                      )}
+                      {current && !match && services.length > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-600">
+                          Not found in the loaded catalogue — double-check this id.
+                        </p>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500">{meta.hint}</p>
-                  </div>
 
-                  <div className="mt-2 flex-1 sm:mt-0">
-                    <input
-                      value={current}
-                      onChange={(e) =>
-                        setServiceIds((prev) => ({ ...prev, [label]: e.target.value.trim() }))
-                      }
-                      placeholder="Service ID (e.g. 1234)"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
-                    />
-                    {match && (
-                      <p className="mt-1 truncate text-[11px] text-emerald-700">
-                        ✓ {match.name} — rate {match.rate} / min {match.min} / max {match.max}
-                      </p>
-                    )}
-                    {current && !match && services.length > 0 && (
-                      <p className="mt-1 text-[11px] text-amber-600">
-                        Not found in the loaded catalogue — double-check this id.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-2 flex gap-2 sm:mt-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={services.length === 0}
-                      onClick={() => { setPickingFor(label); setSearch(""); }}
-                    >
-                      Browse
-                    </Button>
-                    {current && (
+                    <div className="mt-2 flex gap-2 sm:mt-0">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setServiceIds((prev) => ({ ...prev, [label]: "" }))}
+                        disabled={services.length === 0}
+                        onClick={() => { setPickingFor(label); setSearch(""); }}
                       >
-                        Clear
+                        Browse
                       </Button>
-                    )}
+                      {current && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setServiceIds((prev) => ({ ...prev, [label]: "" }))}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
 
-          <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
-            <Button variant="primary" onClick={handleSave} loading={saving}>
-              Save configuration
-            </Button>
-            {config?.updatedAt && (
-              <span className="text-xs text-slate-500">
-                Last saved {new Date(config.updatedAt).toLocaleString()}
-              </span>
+            <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
+              <Button variant="primary" onClick={handleSave} loading={saving}>
+                Save configuration
+              </Button>
+              {config?.updatedAt && (
+                <span className="text-xs text-slate-500">
+                  Last saved {new Date(config.updatedAt).toLocaleString()}
+                </span>
+              )}
+            </div>
+          </Card>
+          </>
+        )}
+
+        {tab === "users" && (
+          <Card>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Registered users</h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Everyone who signed up. Disabling an account signs it out immediately.
+                </p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={loadUsers} loading={usersLoading}>
+                Refresh
+              </Button>
+            </div>
+
+            {usersError && <InfoBanner kind="danger">{usersError}</InfoBanner>}
+
+            {!usersError && users.length === 0 && !usersLoading && (
+              <p className="py-8 text-center text-sm text-slate-500">No accounts yet.</p>
             )}
-          </div>
-        </Card>
+
+            {users.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
+                      <th className="py-2 pr-3 font-semibold">Email</th>
+                      <th className="py-2 pr-3 font-semibold">Name</th>
+                      <th className="py-2 pr-3 font-semibold">Orders</th>
+                      <th className="py-2 pr-3 font-semibold">Last login</th>
+                      <th className="py-2 pr-3 font-semibold">Status</th>
+                      <th className="py-2 font-semibold" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((u) => (
+                      <tr key={u.id} className="border-b border-slate-100 last:border-0">
+                        <td className="py-2.5 pr-3 font-medium text-slate-900">{u.email}</td>
+                        <td className="py-2.5 pr-3 text-slate-600">{u.name || "—"}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-slate-600">{u.orderCount}</td>
+                        <td className="py-2.5 pr-3 text-slate-500">
+                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <StatusPill kind={u.isActive ? "active" : "danger"}>
+                            {u.isActive ? "Active" : "Disabled"}
+                          </StatusPill>
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <Button variant="ghost" size="sm" onClick={() => toggleUser(u)}>
+                            {u.isActive ? "Disable" : "Enable"}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
       </main>
 
       {/* ---- Service picker ---- */}
