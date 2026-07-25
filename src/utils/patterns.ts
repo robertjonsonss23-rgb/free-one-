@@ -1335,6 +1335,113 @@ function getActiveIndexes(values: number[]): number[] {
 // Used when custom ratios are active. No caps, no density limits.
 // Distributes proportionally by view weight, with organic variation.
 // ================================================================
+/**
+ * Spread `targetTotal` across runs in proportion to each run's views.
+ *
+ * Rules:
+ *  - A run either receives 0, or at least `minPerRun` (the provider's
+ *    minimum order size). Never 1..9.
+ *  - The sum is exactly `targetTotal`.
+ *  - Bigger-view runs get proportionally more.
+ *  - If the total can't give every run the minimum, only as many runs as
+ *    the budget allows are used, spread evenly over the timeline rather
+ *    than bunched at one end.
+ */
+function distributeProportionalToViews(
+  runs: { views: number }[],
+  targetTotal: number,
+  minPerRun = 10
+): number[] {
+  const count = runs.length;
+  const result = Array.from({ length: count }, () => 0);
+  const total = Math.floor(targetTotal);
+  if (count === 0 || total <= 0) return result;
+
+  // Not even one minimum order — put it all on the biggest run.
+  if (total < minPerRun) {
+    let best = 0;
+    runs.forEach((run, i) => {
+      if ((run.views || 0) > (runs[best].views || 0)) best = i;
+    });
+    result[best] = total;
+    return result;
+  }
+
+  /* How many runs should participate?
+     Using the maximum affordable count pins every run at exactly the
+     minimum, leaving no surplus to distribute — so delivery stops tracking
+     views. Targeting a slightly higher average per run keeps real headroom,
+     which is what makes the spread proportional. */
+  const affordable = Math.floor(total / minPerRun);
+  const TARGET_PER_ACTIVE = minPerRun * 3;   // ~30 when the minimum is 10
+  const preferred = Math.max(1, Math.round(total / TARGET_PER_ACTIVE));
+  const activeCount = Math.max(1, Math.min(count, affordable, preferred));
+
+  // Choose which runs participate. When we can't use them all, step evenly
+  // through the timeline so delivery stays spread out.
+  let indexes: number[];
+  if (activeCount >= count) {
+    indexes = runs.map((_, i) => i);
+  } else {
+    indexes = [];
+    const stride = count / activeCount;
+    for (let i = 0; i < activeCount; i += 1) {
+      const idx = Math.min(count - 1, Math.round(i * stride + stride / 2));
+      if (!indexes.includes(idx)) indexes.push(idx);
+    }
+    // Rounding collisions can leave gaps; backfill with the biggest runs left.
+    if (indexes.length < activeCount) {
+      const remaining = runs
+        .map((run, i) => ({ i, views: run.views || 0 }))
+        .filter((entry) => !indexes.includes(entry.i))
+        .sort((a, b) => b.views - a.views);
+      for (const entry of remaining) {
+        if (indexes.length >= activeCount) break;
+        indexes.push(entry.i);
+      }
+      indexes.sort((a, b) => a - b);
+    }
+  }
+
+  // Every participating run starts at the minimum; share the rest by views.
+  const values = indexes.map(() => minPerRun);
+  let remaining = total - indexes.length * minPerRun;
+
+  if (remaining > 0) {
+    const viewsOf = indexes.map((i) => Math.max(0, runs[i].views || 0));
+    const viewSum = viewsOf.reduce((sum, v) => sum + v, 0);
+
+    if (viewSum > 0) {
+      // Largest-remainder method: proportional, and sums exactly.
+      const exact = viewsOf.map((v) => (v / viewSum) * remaining);
+      const floors = exact.map((v) => Math.floor(v));
+      floors.forEach((v, i) => { values[i] += v; });
+
+      let leftover = remaining - floors.reduce((sum, v) => sum + v, 0);
+      const order = exact
+        .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+        .sort((a, b) => b.frac - a.frac);
+      let ptr = 0;
+      while (leftover > 0 && order.length > 0) {
+        values[order[ptr % order.length].i] += 1;
+        leftover -= 1;
+        ptr += 1;
+      }
+    } else {
+      // No view data: fall back to an even split.
+      let ptr = 0;
+      while (remaining > 0) {
+        values[ptr % values.length] += 1;
+        remaining -= 1;
+        ptr += 1;
+      }
+    }
+  }
+
+  indexes.forEach((runIdx, i) => { result[runIdx] = values[i]; });
+  return result;
+}
+
 function distributeExactTotal(
   runs: { views: number }[],
   targetTotal: number,
@@ -1610,56 +1717,35 @@ if (config.includeComments) {
   }
 }
 
-  // any active engagement run should be >= 10; zero is allowed for skipped runs
+  /* Every engagement type is spread in proportion to each run's views, so a
+     run delivering 5% of the views also gets ~5% of the likes. Any run that
+     participates gets at least 10 (the provider's minimum order size) — a
+     run is never given 1..9. */
+  const ENGAGEMENT_MIN = 10;
+
   const likesRuns = config.includeLikes
-    ? distributeExactTotal(provisionalRuns, likesTotal, 10, 14)
+    ? distributeProportionalToViews(provisionalRuns, likesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
-  const likeActiveIndexes = getActiveIndexes(likesRuns);
-  const firstLikeIndex = likeActiveIndexes[0] ?? 0;
-  const laterLikeIndexes = likeActiveIndexes.filter((index) => index > firstLikeIndex);
-  const allRunIndexes = provisionalRuns.map((_, index) => index);
-  const fallbackEligibleIndexes = allRunIndexes.filter((index) => index > 0);
-
-  // 🔥 FIX: When custom ratios are active, ALL runs are eligible for shares/saves/reposts
-  // (not just every-other like run)
-  const shareEligibleIndexes = useCustomRatios
-    ? allRunIndexes
-    : (likeActiveIndexes.length > 0
-      ? (laterLikeIndexes.length > 0 ? laterLikeIndexes : likeActiveIndexes.slice(-1))
-      : fallbackEligibleIndexes);
-
-  const saveEligibleIndexes = useCustomRatios
-    ? allRunIndexes
-    : (likeActiveIndexes.length > 0
-      ? (laterLikeIndexes.length > 0 ? laterLikeIndexes.filter((_, i) => i % 2 === 0) : likeActiveIndexes.slice(-1))
-      : fallbackEligibleIndexes.filter((_, i) => i % 2 === 0));
-
-  const repostEligibleIndexes = useCustomRatios
-    ? allRunIndexes
-    : (likeActiveIndexes.length > 0
-      ? (laterLikeIndexes.length > 0 ? laterLikeIndexes.filter((_, i) => i % 2 === 1 || laterLikeIndexes.length <= 3) : likeActiveIndexes.slice(-1))
-      : fallbackEligibleIndexes.filter((_, i) => i % 2 === 1 || fallbackEligibleIndexes.length <= 3));
-
   const sharesRuns = config.includeShares
-    ? distributeExactTotalToSubset(provisionalRuns, shareEligibleIndexes, sharesTotal, 10, 14)
+    ? distributeProportionalToViews(provisionalRuns, sharesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const savesRuns = config.includeSaves
-    ? distributeExactTotalToSubset(provisionalRuns, saveEligibleIndexes, savesTotal, 10, 12)
+    ? distributeProportionalToViews(provisionalRuns, savesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const repostsTarget = config.includeReposts
     ? (useCustomRatios
-        ? Math.max(10, Math.floor(totalViews * (cr!.reposts / 100)))
-        : Math.max(10, Math.floor(likesTotal / 3)))
+        ? Math.max(ENGAGEMENT_MIN, Math.floor(totalViews * (cr!.reposts / 100)))
+        : Math.max(ENGAGEMENT_MIN, Math.floor(likesTotal / 3)))
     : 0;
   const repostsRuns = config.includeReposts
-    ? distributeExactTotalToSubset(provisionalRuns, repostEligibleIndexes, repostsTarget, 10, 12)
+    ? distributeProportionalToViews(provisionalRuns, repostsTarget, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const commentsRuns = config.includeComments
-    ? distributeExactTotal(provisionalRuns, commentsTotal, 10, 12)
+    ? distributeProportionalToViews(provisionalRuns, commentsTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   let cumulativeViews = 0;
