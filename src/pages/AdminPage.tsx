@@ -9,7 +9,7 @@ import {
   StatusPill,
 } from "../components/ui";
 import type { ApiService } from "../types/order";
-import {
+import { 
   SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
