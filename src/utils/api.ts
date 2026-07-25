@@ -850,6 +850,7 @@ export interface AdminUser {
   email: string;
   name: string;
   isActive: boolean;
+  balance: number;
   createdAt: string | null;
   lastLoginAt: string | null;
   orderCount: number;
@@ -868,6 +869,7 @@ export async function fetchAdminUsers(password: string): Promise<AdminUser[]> {
       email: String(o.email ?? ""),
       name: String(o.name ?? ""),
       isActive: o.isActive !== false,
+      balance: Number(o.balance) || 0,
       createdAt: typeof o.createdAt === "string" ? o.createdAt : null,
       lastLoginAt: typeof o.lastLoginAt === "string" ? o.lastLoginAt : null,
       orderCount: Number(o.orderCount) || 0,
@@ -1165,4 +1167,174 @@ export async function submitDeposit(payload: {
   });
   const result = await parseOrThrow(response);
   return { message: String(result.message || "Submitted for verification.") };
+}
+
+/* ============================================================
+   ADMIN — PAYMENTS
+   ============================================================ */
+
+export interface AdminDeposit {
+  id: string;
+  userId: string;
+  userEmail: string;
+  amount: number;
+  method: "upi" | "crypto";
+  methodId: string;
+  reference: string;
+  status: "pending" | "approved" | "rejected";
+  adminNote: string;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface AdminUpiMethod {
+  id: string;
+  label: string;
+  upiId: string;
+  payeeName: string;
+  instructions: string;
+  isActive: boolean;
+}
+
+export interface AdminCryptoMethod {
+  id: string;
+  label: string;
+  network: string;
+  address: string;
+  instructions: string;
+  isActive: boolean;
+}
+
+export interface AdminPaymentSettings {
+  minDeposit: number;
+  markupPercent: number;
+  upiEnabled: boolean;
+  cryptoEnabled: boolean;
+  upiMethods: AdminUpiMethod[];
+  cryptoMethods: AdminCryptoMethod[];
+  updatedAt: string | null;
+}
+
+export async function fetchAdminDeposits(
+  password: string,
+  status: "pending" | "all" = "pending"
+): Promise<{ pendingCount: number; deposits: AdminDeposit[] }> {
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/admin/deposits?status=${status}`,
+    { headers: { "x-admin-password": password } }
+  );
+  const payload = await parseOrThrow(response);
+  const rows = Array.isArray(payload.deposits) ? payload.deposits : [];
+  return {
+    pendingCount: Number(payload.pendingCount) || 0,
+    deposits: rows.map((d) => {
+      const o = d as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        userId: String(o.userId ?? ""),
+        userEmail: String(o.userEmail ?? ""),
+        amount: Number(o.amount) || 0,
+        method: String(o.method ?? "upi") as "upi" | "crypto",
+        methodId: String(o.methodId ?? ""),
+        reference: String(o.reference ?? ""),
+        status: String(o.status ?? "pending") as AdminDeposit["status"],
+        adminNote: String(o.adminNote ?? ""),
+        createdAt: String(o.createdAt ?? ""),
+        reviewedAt: typeof o.reviewedAt === "string" ? o.reviewedAt : null,
+      };
+    }),
+  };
+}
+
+export async function reviewDeposit(
+  password: string,
+  depositId: string,
+  action: "approve" | "reject",
+  note?: string
+): Promise<{ status: string; newBalance: number | null }> {
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/admin/deposits/${depositId}/review`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin-password": password },
+      body: JSON.stringify({ action, note }),
+    }
+  );
+  const payload = await parseOrThrow(response);
+  return {
+    status: String(payload.status ?? ""),
+    newBalance: typeof payload.newBalance === "number" ? payload.newBalance : null,
+  };
+}
+
+export async function adjustUserWallet(
+  password: string,
+  userId: string,
+  amount: number,
+  note: string
+): Promise<number> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users/${userId}/wallet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ amount, note }),
+  });
+  const payload = await parseOrThrow(response);
+  return Number(payload.balance) || 0;
+}
+
+export async function fetchPaymentSettings(password: string): Promise<AdminPaymentSettings> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/payment-settings`, {
+    headers: { "x-admin-password": password },
+  });
+  const payload = await parseOrThrow(response);
+  const upi = Array.isArray(payload.upiMethods) ? payload.upiMethods : [];
+  const crypto = Array.isArray(payload.cryptoMethods) ? payload.cryptoMethods : [];
+  return {
+    minDeposit: Number(payload.minDeposit) || 50,
+    markupPercent: Number(payload.markupPercent) || 0,
+    upiEnabled: Boolean(payload.upiEnabled),
+    cryptoEnabled: Boolean(payload.cryptoEnabled),
+    upiMethods: upi.map((m) => {
+      const o = m as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        label: String(o.label ?? ""),
+        upiId: String(o.upiId ?? ""),
+        payeeName: String(o.payeeName ?? ""),
+        instructions: String(o.instructions ?? ""),
+        isActive: o.isActive !== false,
+      };
+    }),
+    cryptoMethods: crypto.map((m) => {
+      const o = m as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        label: String(o.label ?? ""),
+        network: String(o.network ?? ""),
+        address: String(o.address ?? ""),
+        instructions: String(o.instructions ?? ""),
+        isActive: o.isActive !== false,
+      };
+    }),
+    updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
+  };
+}
+
+export async function savePaymentSettings(
+  password: string,
+  settings: Partial<{
+    minDeposit: number;
+    markupPercent: number;
+    upiEnabled: boolean;
+    cryptoEnabled: boolean;
+    upiMethods: AdminUpiMethod[];
+    cryptoMethods: AdminCryptoMethod[];
+  }>
+): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/payment-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify(settings),
+  });
+  await parseOrThrow(response);
 }
