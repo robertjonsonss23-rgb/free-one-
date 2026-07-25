@@ -1,12 +1,16 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { AdminPage } from "./pages/AdminPage.tsx";
+import { AuthPage } from "./pages/AuthPage.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
-
-// User auth was removed; the app opens straight to the dashboard.
-// #admin is the only gated area (password checked server-side).
+import { Spinner } from "./components/ui.tsx";
+import {
+  fetchCurrentUser,
+  setUnauthorizedHandler,
+  type AuthUser,
+} from "./utils/api.ts";
 
 function useHash(): string {
   const [hash, setHash] = useState<string>(
@@ -23,7 +27,42 @@ function useHash(): string {
 function Root() {
   const hash = useHash();
   const isAdminRoute = hash === "#admin" || hash === "#/admin";
-  return isAdminRoute ? <AdminPage /> : <App />;
+
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  // Restore the session on load (token lives in localStorage).
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((found) => { if (!cancelled) setUser(found); })
+      .finally(() => { if (!cancelled) setChecking(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // If any API call returns 401, drop straight back to the login screen.
+  const handleUnauthorized = useCallback(() => setUser(null), []);
+  useEffect(() => {
+    setUnauthorizedHandler(handleUnauthorized);
+  }, [handleUnauthorized]);
+
+  // The admin area has its own password and is independent of user accounts.
+  if (isAdminRoute) return <AdminPage />;
+
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-violet-50">
+        <div className="flex flex-col items-center gap-3">
+          <Spinner size="lg" />
+          <p className="text-sm text-slate-500 font-medium">Loading TRUESMM…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <AuthPage onAuthenticated={setUser} />;
+
+  return <App user={user} onSignOut={() => setUser(null)} />;
 }
 
 // Global fallback for uncaught runtime errors so the screen never stays white.
