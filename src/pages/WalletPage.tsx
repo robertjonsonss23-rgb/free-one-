@@ -238,6 +238,19 @@ export function WalletPage({ onBalanceChange }: WalletPageProps) {
                 {/* payment target */}
                 {selected && (
                   <div className="mb-5 rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/50 p-4">
+                    {/* Scannable QR, when the admin has uploaded one */}
+                    {(selected as { qrImage?: string }).qrImage && (
+                      <div className="mb-4 flex flex-col items-center">
+                        <img
+                          src={(selected as { qrImage: string }).qrImage}
+                          alt="Payment QR code"
+                          className="h-52 w-52 rounded-xl border border-slate-200 bg-white object-contain p-2 shadow-sm"
+                        />
+                        <p className="mt-2 text-[11px] font-semibold text-slate-600">
+                          Scan with any {kind === "upi" ? "UPI" : "crypto"} app
+                        </p>
+                      </div>
+                    )}
                     {kind === "upi" ? (
                       <>
                         <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">
