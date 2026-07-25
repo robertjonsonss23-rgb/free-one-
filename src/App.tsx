@@ -4,6 +4,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NewOrderPage } from "./pages/NewOrderPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { RatiosPage } from "./pages/RatiosPage";
+import { WalletPage } from "./pages/WalletPage";
 import type {
   CreatedOrder,
   EngagementRatios, 
@@ -13,7 +14,7 @@ import type {
 import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
 import {
   updateOrderControl,
-  fetchOrderStatus, 
+  fetchOrderStatus,
   fetchOrdersForCurrentUser,
   logout,
   type AuthUser,
@@ -25,12 +26,14 @@ type NavKey =
   | "dashboard"
   | "new-order"
   | "orders"
+  | "wallet"
   | "ratios";
 
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
   { key: "new-order", label: "New Order", description: "Create a campaign" },
   { key: "orders", label: "Orders", description: "Manage active orders" },
+  { key: "wallet", label: "Wallet", description: "Balance & top-ups" },
   { key: "ratios", label: "Ratios", description: "Engagement presets" },
 ];
 
@@ -148,6 +151,7 @@ export default function App({ user, onSignOut }: AppProps) {
       saved === "dashboard" ||
       saved === "new-order" ||
       saved === "orders" ||
+      saved === "wallet" ||
       saved === "ratios"
     ) {
       return saved;
@@ -164,6 +168,7 @@ export default function App({ user, onSignOut }: AppProps) {
     hydrateOrderDates(readStorage<CreatedOrder[]>(`dev-smm-orders:${user.id}`, []))
   );
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [balance, setBalance] = useState<number>(user.balance ?? 0);
   const [activeRatios, setActiveRatios] = useState<EngagementRatios>(() =>
     readStorage<EngagementRatios>(
       "dev-smm-active-ratios",
@@ -399,12 +404,18 @@ export default function App({ user, onSignOut }: AppProps) {
           onCreateOrder={(order) =>
             persistOrders((prev) => [order, ...prev])
           }
+          onNavigateToWallet={() => navigateToPage("wallet")}
+          onBalanceChange={setBalance}
           onNavigateToOrders={(notice) => {
             if (notice) setOrdersNotice(notice);
             navigateToPage("orders");
           }}
         />
       );
+    }
+
+    if (activePage === "wallet") {
+      return <WalletPage onBalanceChange={setBalance} />;
     }
 
     if (activePage === "dashboard") {
@@ -558,6 +569,7 @@ export default function App({ user, onSignOut }: AppProps) {
     persistOrders,
     syncOrdersWithBackend,
     ordersLoading,
+    balance,
     activeRatios,
     ratioPresets,
     persistActiveRatios,
@@ -622,6 +634,18 @@ export default function App({ user, onSignOut }: AppProps) {
               <p className="text-[11px] font-medium text-slate-600">Auto-sync</p>
               <p className="text-[11px] text-slate-500">Every 5 minutes</p>
             </div>
+            <button
+              type="button"
+              onClick={() => navigateToPage("wallet")}
+              className="w-full rounded-lg bg-emerald-50 px-3 py-2 text-left transition hover:bg-emerald-100"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                Wallet
+              </p>
+              <p className="text-sm font-extrabold tabular-nums text-emerald-900">
+                ₹{balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </button>
             <div className="rounded-lg bg-indigo-50 px-3 py-2">
               <p className="truncate text-[11px] font-semibold text-indigo-900" title={user.email}>
                 {user.name || user.email}
