@@ -1,16 +1,15 @@
 import type { ApiService } from "../types/order";
 import type { BackendRunInfo } from "../types/order";
 
+/* Credentials and service ids are NOT sent — the server resolves them from
+   the admin-managed panel configuration. */
 interface CreateOrderPayload {
   name?: string;
-  apiUrl: string;
-  apiKey: string;
   link: string;
   services: Partial<
     Record<
       "views" | "likes" | "shares" | "saves" | "comments" | "reposts",
       {
-        serviceId: string;
         runs: Array<{
           time: string;
           quantity?: number;
@@ -228,7 +227,6 @@ export async function createSmmOrder(payload: CreateOrderPayload): Promise<Creat
   const endpoint = `${BACKEND_BASE_URL}/api/order`;
   console.info("[Create Order] Sending request", {
     endpoint,
-    apiUrl: payload.apiUrl,
     services: Object.keys(payload.services),
     link: payload.link,
     runsCount: Object.values(payload.services).reduce((sum, s) => sum + (s?.runs?.length || 0), 0),
