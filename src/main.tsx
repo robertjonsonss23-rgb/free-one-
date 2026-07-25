@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { AdminPage } from "./pages/AdminPage.tsx";
-import { AuthPage } from "./pages/AuthPage.tsx";
+import { LandingPage } from "./pages/LandingPage.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Spinner } from "./components/ui.tsx";
 import {
@@ -66,8 +66,11 @@ function Root() {
     );
   }
 
+  // Signed-out visitors get the marketing landing page, which carries its own
+  // sign-in / sign-up modal. It is always dark, so the theme toggle is not
+  // shown here — the toggle lives inside the app once you are signed in.
   if (!user) {
-    return <AuthPage onAuthenticated={setUser} theme={theme} onToggleTheme={toggleTheme} />;
+    return <LandingPage onAuthenticated={setUser} />;
   }
 
   return (
