@@ -66,9 +66,17 @@ interface OrderStatusResult {
   }>;
 }
 
+// Set VITE_BACKEND_URL in .env.local (dev) and in Vercel → Settings → Environment Variables (prod).
+// Example: https://your-new-backend.onrender.com
 const BACKEND_BASE_URL =
-  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() ||
-  "https://truesmm-backend.onrender.com";
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || "";
+
+if (!BACKEND_BASE_URL) {
+  console.error(
+    "[config] VITE_BACKEND_URL is not set. All backend calls will fail. " +
+      "Add it to .env.local locally and to your Vercel project env vars."
+  );
+}
 
 interface RawService {
   service?: string | number;
