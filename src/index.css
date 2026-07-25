@@ -660,3 +660,69 @@ tbody tr:hover {
 html.theme-ready body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
+
+/* ============================================ */
+/* CHARTS IN DARK MODE                          */
+/* Recharts writes colours as SVG attributes    */
+/* (fill="#475569"), which CSS variables cannot */
+/* reach — so override the rendered elements.   */
+/* `fill`/`stroke` as CSS properties beat the   */
+/* presentation attributes Recharts emits.      */
+/* ============================================ */
+
+/* Axis tick labels + legend text */
+.dark .recharts-cartesian-axis-tick text,
+.dark .recharts-label,
+.dark .recharts-text {
+  fill: #c6cedb !important;
+}
+
+.dark .recharts-legend-item-text {
+  color: #c6cedb !important;
+}
+
+/* Grid lines and axis rules: faint, not black-on-black */
+.dark .recharts-cartesian-grid line,
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line {
+  stroke: #2b3446 !important;
+}
+
+.dark .recharts-cartesian-axis-line,
+.dark .recharts-cartesian-axis-tick-line {
+  stroke: #3a4557 !important;
+}
+
+/* Reference lines / brushes */
+.dark .recharts-reference-line line {
+  stroke: #4a5569 !important;
+}
+
+/* Recharts' default tooltip (used where a custom one isn't supplied) */
+.dark .recharts-default-tooltip {
+  background-color: #161c28 !important;
+  border-color: #2b3446 !important;
+  color: #eef2f7 !important;
+}
+
+.dark .recharts-tooltip-item,
+.dark .recharts-tooltip-label {
+  color: #eef2f7 !important;
+}
+
+/* Hover highlight bar behind the cursor */
+.dark .recharts-tooltip-cursor {
+  fill: rgb(255 255 255 / 0.06) !important;
+  stroke: #3a4557 !important;
+}
+
+/* Custom tooltips in this codebase use inline styles for the shell;
+   these classes let them inherit the dark palette. */
+.dark .chart-tooltip {
+  background-color: #161c28 !important;
+  border-color: #2b3446 !important;
+  color: #eef2f7 !important;
+}
+.dark .chart-tooltip-label {
+  color: #aab4c4 !important;
+}
