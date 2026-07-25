@@ -308,6 +308,21 @@ export function NewOrderPage({
     if (preset === "fast-start") { setVariancePercent(32); setDelivery({ mode: "preset", label: "6h", hours: 6 }); }
     if (preset === "trending-push") { setVariancePercent(40); setDelivery({ mode: "preset", label: "24h", hours: 24 }); }
     if (preset === "slow-burn") { setVariancePercent(22); setDelivery({ mode: "preset", label: "48h", hours: 48 }); }
+
+    // Whop — smoother curves over longer windows
+    if (preset === "whop-1") { setVariancePercent(20); setDelivery({ mode: "preset", label: "12h", hours: 12 }); }
+    if (preset === "whop-2") { setVariancePercent(18); setDelivery({ mode: "preset", label: "24h", hours: 24 }); }
+    if (preset === "whop-3") { setVariancePercent(26); setDelivery({ mode: "preset", label: "18h", hours: 18 }); }
+    if (preset === "whop-4") { setVariancePercent(22); setDelivery({ mode: "preset", label: "36h", hours: 36 }); }
+    if (preset === "whop-5") { setVariancePercent(24); setDelivery({ mode: "preset", label: "48h", hours: 48 }); }
+
+    // Clipster — sharper, shorter bursts
+    if (preset === "clipster-1") { setVariancePercent(38); setDelivery({ mode: "preset", label: "6h", hours: 6 }); }
+    if (preset === "clipster-2") { setVariancePercent(46); setDelivery({ mode: "preset", label: "8h", hours: 8 }); }
+    if (preset === "clipster-3") { setVariancePercent(42); setDelivery({ mode: "preset", label: "12h", hours: 12 }); }
+    if (preset === "clipster-4") { setVariancePercent(40); setDelivery({ mode: "preset", label: "10h", hours: 10 }); }
+    if (preset === "clipster-5") { setVariancePercent(36); setDelivery({ mode: "preset", label: "18h", hours: 18 }); }
+
     setSeed((current) => current + 1);
   };
 
@@ -337,6 +352,40 @@ export function NewOrderPage({
     { label: "Fast Start", value: "fast-start", emoji: "⚡" },
     { label: "Trending", value: "trending-push", emoji: "🔥" },
     { label: "Slow Burn", value: "slow-burn", emoji: "🌊" },
+  ];
+
+  /* Named preset families. Each holds five distinct curve shapes so the
+     same family can be reused without every order looking identical. */
+  const presetGroups: Array<{
+    name: string;
+    emoji: string;
+    accent: string;
+    items: Array<{ label: string; value: QuickPatternPreset; hint: string }>;
+  }> = [
+    {
+      name: "Whop",
+      emoji: "🟣",
+      accent: "violet",
+      items: [
+        { label: "W1", value: "whop-1", hint: "Smooth S-curve · 12h" },
+        { label: "W2", value: "whop-2", hint: "Steady climb · 24h" },
+        { label: "W3", value: "whop-3", hint: "Exponential · 18h" },
+        { label: "W4", value: "whop-4", hint: "Natural decay · 36h" },
+        { label: "W5", value: "whop-5", hint: "Wave · 48h" },
+      ],
+    },
+    {
+      name: "Clipster",
+      emoji: "🟠",
+      accent: "orange",
+      items: [
+        { label: "C1", value: "clipster-1", hint: "Rocket launch · 6h" },
+        { label: "C2", value: "clipster-2", hint: "Viral spike · 8h" },
+        { label: "C3", value: "clipster-3", hint: "Micro burst · 12h" },
+        { label: "C4", value: "clipster-4", hint: "Fibonacci · 10h" },
+        { label: "C5", value: "clipster-5", hint: "Heartbeat · 18h" },
+      ],
+    },
   ];
 
   const graphTotals = useMemo(() => {
@@ -711,6 +760,7 @@ export function NewOrderPage({
             plan={safePlan}
             quickPreset={quickPreset}
             presetButtons={presetButtons}
+            presetGroups={presetGroups}
             onApplyPreset={handleApplyPreset}
           />
         </Card>
@@ -1271,6 +1321,34 @@ function buildIambatmanChartData(plan: PatternPlan) {
     };
   });
 
+  /* ---- 1. Force every cumulative series to be non-decreasing ----
+     A single backwards step is what produces the visible zigzag, because
+     the spline has to swing down and back up again. Totals are cumulative
+     by definition, so clamping to the running maximum only removes noise. */
+  let maxViews = 0, maxLikes = 0, maxShares = 0, maxComments = 0;
+  for (const row of rows) {
+    maxViews = row.views = Math.max(maxViews, row.views);
+    maxLikes = row.likesVisual = Math.max(maxLikes, row.likesVisual);
+    maxShares = row.sharesVisual = Math.max(maxShares, row.sharesVisual);
+    maxComments = row.commentsVisual = Math.max(maxComments, row.commentsVisual);
+  }
+
+  /* ---- 2. Keep the four lines in a fixed stack ----
+     Each series is capped to a fraction of the one above it, so
+     views > likes > shares > comments holds at every single x. Multiplicative
+     caps (not subtractive) preserve each curve's shape while making a
+     crossing arithmetically impossible. Real figures are unaffected —
+     the tooltip and the stat cards read from the *Actual fields. */
+  const CAP_LIKES_OF_VIEWS = 0.72;
+  const CAP_SHARES_OF_LIKES = 0.64;
+  const CAP_COMMENTS_OF_SHARES = 0.58;
+
+  for (const row of rows) {
+    row.likesVisual = Math.min(row.likesVisual, row.views * CAP_LIKES_OF_VIEWS);
+    row.sharesVisual = Math.min(row.sharesVisual, row.likesVisual * CAP_SHARES_OF_LIKES);
+    row.commentsVisual = Math.min(row.commentsVisual, row.sharesVisual * CAP_COMMENTS_OF_SHARES);
+  }
+
   return rows;
 }
 
@@ -1301,6 +1379,12 @@ interface SchedulePreviewIambatmanProps {
   plan: PatternPlan;
   quickPreset?: QuickPatternPreset | null;
   presetButtons?: Array<{ label: string; value: QuickPatternPreset; emoji: string }>;
+  presetGroups?: Array<{
+    name: string;
+    emoji: string;
+    accent: string;
+    items: Array<{ label: string; value: QuickPatternPreset; hint: string }>;
+  }>;
   onApplyPreset?: (preset: QuickPatternPreset) => void;
 }
 
@@ -1308,6 +1392,7 @@ function SchedulePreviewIambatman({
   plan,
   quickPreset,
   presetButtons,
+  presetGroups,
   onApplyPreset,
 }: SchedulePreviewIambatmanProps) {
   const [expandedRuns, setExpandedRuns] = useState(false);
@@ -1365,6 +1450,60 @@ function SchedulePreviewIambatman({
               );
             })}
           </div>
+
+          {/* Named families — five curve shapes each */}
+          {presetGroups && presetGroups.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {presetGroups.map((group) => {
+                const tones: Record<string, { active: string; idle: string; dot: string }> = {
+                  violet: {
+                    active: "bg-violet-600 text-white ring-2 ring-violet-300",
+                    idle: "bg-white border-2 border-violet-200 text-violet-700 hover:border-violet-400 hover:bg-violet-50",
+                    dot: "text-violet-600",
+                  },
+                  orange: {
+                    active: "bg-orange-500 text-white ring-2 ring-orange-300",
+                    idle: "bg-white border-2 border-orange-200 text-orange-700 hover:border-orange-400 hover:bg-orange-50",
+                    dot: "text-orange-600",
+                  },
+                };
+                const tone = tones[group.accent] ?? tones.violet;
+                const groupActive = group.items.some((i) => i.value === quickPreset);
+                return (
+                  <div key={group.name}>
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <span className={`text-[11px] font-extrabold ${tone.dot}`}>
+                        {group.emoji} {group.name}
+                      </span>
+                      {groupActive && (
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                          active
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {group.items.map((item) => {
+                        const isActive = quickPreset === item.value;
+                        return (
+                          <button
+                            key={item.value}
+                            type="button"
+                            title={item.hint}
+                            onClick={() => onApplyPreset(item.value)}
+                            className={`rounded-lg px-1 py-1.5 text-[11px] font-bold transition-all ${
+                              isActive ? `${tone.active} shadow-md scale-[1.03]` : tone.idle
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1396,15 +1535,15 @@ function SchedulePreviewIambatman({
             <_Tooltip content={<IamTooltip />} />
             <_Legend wrapperStyle={{ fontSize: "12px", color: "#44382e" }} iconType="circle" />
             {/* Faded planned lines (iambatman style) */}
-            <_Line type="basis" dataKey="views" stroke="#d86bd8" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-views" legendType="none" tooltipType="none" />
-            <_Line type="basis" dataKey="likesVisual" stroke="#7188de" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-likes" legendType="none" tooltipType="none" />
-            <_Line type="basis" dataKey="commentsVisual" stroke="#54d5de" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-comments" legendType="none" tooltipType="none" />
-            <_Line type="basis" dataKey="sharesVisual" stroke="#e6a263" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-shares" legendType="none" tooltipType="none" />
+            <_Line type="monotone" dataKey="views" stroke="#d86bd8" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-views" legendType="none" tooltipType="none" />
+            <_Line type="monotone" dataKey="likesVisual" stroke="#7188de" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-likes" legendType="none" tooltipType="none" />
+            <_Line type="monotone" dataKey="commentsVisual" stroke="#54d5de" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-comments" legendType="none" tooltipType="none" />
+            <_Line type="monotone" dataKey="sharesVisual" stroke="#e6a263" opacity={0.13} dot={false} strokeDasharray="5 5" name="planned-shares" legendType="none" tooltipType="none" />
             {/* Solid actual lines (iambatman colors) */}
-            <_Line type="basis" dataKey="views" stroke="#d86bd8" strokeWidth={2.4} dot={false} name="Views" isAnimationActive animationDuration={900} />
-            <_Line type="basis" dataKey="likesVisual" stroke="#7188de" strokeWidth={2.1} dot={false} name="Likes" isAnimationActive animationDuration={900} />
-            <_Line type="basis" dataKey="commentsVisual" stroke="#54d5de" strokeWidth={2} dot={false} name="Comments" isAnimationActive animationDuration={900} />
-            <_Line type="basis" dataKey="sharesVisual" stroke="#e6a263" strokeWidth={2} dot={false} name="Shares" isAnimationActive animationDuration={900} />
+            <_Line type="monotone" dataKey="views" stroke="#d86bd8" strokeWidth={2.4} dot={false} name="Views" isAnimationActive animationDuration={900} />
+            <_Line type="monotone" dataKey="likesVisual" stroke="#7188de" strokeWidth={2.1} dot={false} name="Likes" isAnimationActive animationDuration={900} />
+            <_Line type="monotone" dataKey="commentsVisual" stroke="#54d5de" strokeWidth={2} dot={false} name="Comments" isAnimationActive animationDuration={900} />
+            <_Line type="monotone" dataKey="sharesVisual" stroke="#e6a263" strokeWidth={2} dot={false} name="Shares" isAnimationActive animationDuration={900} />
           </_LineChart>
         </_ResponsiveContainer>
       </div>
