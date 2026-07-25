@@ -66,17 +66,28 @@ interface OrderStatusResult {
   }>;
 }
 
-// Set VITE_BACKEND_URL in .env.local (dev) and in Vercel → Settings → Environment Variables (prod).
-// Example: https://your-new-backend.onrender.com
-const BACKEND_BASE_URL =
-  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || "";
+// Backend base URL.
+// Preferred: set VITE_BACKEND_URL in .env.local (dev) and in Vercel → Settings →
+// Environment Variables (prod). The constant below is only a safety net so the
+// app still works if that env var is ever missing.
+//
+// NOTE: VITE_* vars are inlined at BUILD time. Changing one in Vercel requires a
+// redeploy — a restart will not pick it up.
+export const DEFAULT_BACKEND_URL = "https://freeone-back.onrender.com";
 
-if (!BACKEND_BASE_URL) {
-  console.error(
-    "[config] VITE_BACKEND_URL is not set. All backend calls will fail. " +
-      "Add it to .env.local locally and to your Vercel project env vars."
+export const BACKEND_BASE_URL = (
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() ||
+  DEFAULT_BACKEND_URL
+).replace(/\/$/, "");
+
+if (!(import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim()) {
+  console.warn(
+    `[config] VITE_BACKEND_URL is not set — falling back to ${DEFAULT_BACKEND_URL}. ` +
+      "Set it in Vercel → Settings → Environment Variables, then redeploy."
   );
 }
+
+console.info(`[config] Backend: ${BACKEND_BASE_URL}`);
 
 interface RawService {
   service?: string | number;
@@ -133,7 +144,7 @@ export async function fetchPanelPricingMetadata(
   apiKey: string,
   currency?: string
 ): Promise<PanelPricingMetadata> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/panel/pricing-meta`;
+  const endpoint = `${BACKEND_BASE_URL}/api/panel/pricing-meta`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -155,7 +166,7 @@ export async function fetchPanelPricingMetadata(
 }
 
 export async function fetchServices(apiUrl: string, apiKey: string): Promise<ApiService[]> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/services`;
+  const endpoint = `${BACKEND_BASE_URL}/api/services`;
   console.info("[Fetch Services] Sending request", { endpoint, apiUrl });
 
   let response: Response;
@@ -214,7 +225,7 @@ export async function fetchServices(apiUrl: string, apiKey: string): Promise<Api
 }
 
 export async function createSmmOrder(payload: CreateOrderPayload): Promise<CreateOrderResult> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/order`;
+  const endpoint = `${BACKEND_BASE_URL}/api/order`;
   console.info("[Create Order] Sending request", {
     endpoint,
     apiUrl: payload.apiUrl,
@@ -307,7 +318,7 @@ export async function updateOrderControl(payload: {
   schedulerOrderId: string;
   action: "pause" | "resume" | "cancel";
 }): Promise<OrderControlResult> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/order/control`;
+  const endpoint = `${BACKEND_BASE_URL}/api/order/control`;
 
   console.info(`[Order Control] Sending ${payload.action.toUpperCase()} request`, {
     endpoint,
@@ -368,7 +379,7 @@ export async function updateOrderControl(payload: {
 
 // 🔥 FIXED: Now returns properly typed BackendRunInfo matching actual backend response
 export async function fetchOrderRuns(schedulerOrderId: string): Promise<FetchOrderRunsResult> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/order/runs/${schedulerOrderId}`;
+  const endpoint = `${BACKEND_BASE_URL}/api/order/runs/${schedulerOrderId}`;
 
   try {
     const response = await fetch(endpoint, {
@@ -393,7 +404,7 @@ export async function fetchOrderRuns(schedulerOrderId: string): Promise<FetchOrd
 }
 
 export async function fetchOrderStatus(schedulerOrderId: string): Promise<OrderStatusResult> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/order/status/${schedulerOrderId}`;
+  const endpoint = `${BACKEND_BASE_URL}/api/order/status/${schedulerOrderId}`;
 
   try {
     const response = await fetch(endpoint, {
@@ -425,7 +436,7 @@ export async function fetchAllOrdersStatus(): Promise<{
     }>;
   }>;
 }> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/orders/status`;
+  const endpoint = `${BACKEND_BASE_URL}/api/orders/status`;
 
   try {
     const response = await fetch(endpoint, {
@@ -445,7 +456,7 @@ export async function fetchAllOrdersStatus(): Promise<{
 }
 
 export async function fetchMinViewsSetting(): Promise<number> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/settings/min-views`;
+  const endpoint = `${BACKEND_BASE_URL}/api/settings/min-views`;
 
   try {
     const response = await fetch(endpoint);
@@ -460,7 +471,7 @@ export async function fetchMinViewsSetting(): Promise<number> {
 export async function updateMinViewsSetting(
   minViewsPerRun: number
 ): Promise<{ success: boolean; minViewsPerRun: number }> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/settings/min-views`;
+  const endpoint = `${BACKEND_BASE_URL}/api/settings/min-views`;
 
   try {
     const response = await fetch(endpoint, {
@@ -520,7 +531,7 @@ export interface ProviderRunStatus {
 export async function checkProviderOrderStatus(schedulerOrderId: string): Promise<{
   results: ProviderRunStatus[];
 }> {
-  const endpoint = `${BACKEND_BASE_URL.replace(/\/$/, "")}/api/order/provider-status/${schedulerOrderId}`;
+  const endpoint = `${BACKEND_BASE_URL}/api/order/provider-status/${schedulerOrderId}`;
 
   try {
     const response = await fetch(endpoint, {
