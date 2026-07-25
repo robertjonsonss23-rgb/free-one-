@@ -29,7 +29,11 @@ export type QuickPatternPreset =
   | "viral-boost"
   | "fast-start"
   | "trending-push"
-  | "slow-burn";
+  | "slow-burn"
+  // Whop — 5 curve variants
+  | "whop-1" | "whop-2" | "whop-3" | "whop-4" | "whop-5"
+  // Clipster — 5 curve variants
+  | "clipster-1" | "clipster-2" | "clipster-3" | "clipster-4" | "clipster-5";
 
 export type RelativeCountMode = "auto" | "custom";
 
