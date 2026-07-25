@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RunTable } from "../components/RunTable";
 import type {
@@ -290,7 +290,68 @@ export function NewOrderPage({
     return { ...basePlan, runs: newRuns };
   }, [useClonedPlan, clonedPlan, generatedPlan]);
 
-  const safePlan = useMemo(() => ({ ...plan, runs: plan?.runs || [] }), [plan]);
+  /* Manual per-run overrides from the Run schedule table.
+     Keyed by run index -> field -> value. Regenerating the plan (changing
+     views, pattern, delivery window, …) clears them, because the run list
+     itself is different. */
+  const [runOverrides, setRunOverrides] = useState<
+    Record<number, Partial<Record<"views" | "likes" | "shares" | "saves" | "comments" | "reposts", number>>>
+  >({});
+
+  const basePlanRuns = plan?.runs || [];
+
+  // Drop overrides whenever a fresh plan is generated.
+  const planSignature = `${basePlanRuns.length}:${seed}:${totalViews}:${delivery.label}:${quickPreset ?? ""}`;
+  const lastSignatureRef = useRef(planSignature);
+  useEffect(() => {
+    if (lastSignatureRef.current !== planSignature) {
+      lastSignatureRef.current = planSignature;
+      setRunOverrides({});
+    }
+  }, [planSignature]);
+
+  const safePlan = useMemo(() => {
+    const runs = basePlanRuns.map((run, index) => {
+      const patch = runOverrides[index];
+      return patch ? { ...run, ...patch } : run;
+    });
+
+    // Recompute cumulative columns so the graph and totals stay consistent
+    // with whatever the user typed.
+    let cv = 0, cl = 0, cs = 0, csv = 0, cc = 0, cr = 0;
+    const withCumulative = runs.map((run) => {
+      cv += run.views || 0;
+      cl += run.likes || 0;
+      cs += run.shares || 0;
+      csv += run.saves || 0;
+      cc += run.comments || 0;
+      cr += run.reposts || 0;
+      return {
+        ...run,
+        cumulativeViews: cv,
+        cumulativeLikes: cl,
+        cumulativeShares: cs,
+        cumulativeSaves: csv,
+        cumulativeComments: cc,
+        cumulativeReposts: cr,
+      };
+    });
+
+    return { ...plan, runs: withCumulative };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, basePlanRuns, runOverrides]);
+
+  const handleEditRun = useCallback(
+    (runIndex: number, field: "views" | "likes" | "shares" | "saves" | "comments" | "reposts", value: number) => {
+      setRunOverrides((prev) => ({
+        ...prev,
+        [runIndex]: { ...prev[runIndex], [field]: Math.max(0, Math.floor(value)) },
+      }));
+    },
+    []
+  );
+
+  const editedRunCount = Object.keys(runOverrides).length;
 
   function isValidUrl(value: string) {
     try {
@@ -905,7 +966,30 @@ export function NewOrderPage({
       {/* ============ ROW 3: RUN TABLE ============ */}
       <Card padding="md" className="border-2 border-slate-200 shadow-md bg-white">
         <SectionTitle step="4" title="Run schedule" description="Detailed list of automated runs" accent="emerald" />
-        <RunTable runs={safePlan.runs || []} mode="schedule" />
+        {editedRunCount > 0 && (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-[11px] font-bold text-amber-800">
+              {editedRunCount} run{editedRunCount > 1 ? "s" : ""} manually edited — these values will be used for the order.
+            </p>
+            <button
+              type="button"
+              onClick={() => setRunOverrides({})}
+              className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-bold text-amber-700 transition hover:bg-amber-100"
+            >
+              Undo all edits
+            </button>
+          </div>
+        )}
+        <p className="mb-2 text-[10px] font-medium text-slate-500">
+          Click any number to edit it. Engagement values must be 0 or at least 10 (provider minimum).
+        </p>
+        <RunTable
+          runs={safePlan.runs || []}
+          mode="schedule"
+          editable
+          engagementMinimum={10}
+          onEditRun={handleEditRun}
+        />
       </Card>
 
       {/* ============ STICKY FOOTER: COST + DEPLOY ============ */}
