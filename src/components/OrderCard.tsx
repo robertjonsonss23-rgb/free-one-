@@ -257,11 +257,11 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
                     return isNaN(d.getTime()) ? String(label) : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
                   }}
                 />
-                <Line type="basis" dataKey="views" stroke="#4f46e5" strokeWidth={2} dot={false} name="Views" />
-                <Line type="basis" dataKey="likes" stroke="#ec4899" strokeWidth={1.5} dot={false} name="Likes" />
-                <Line type="basis" dataKey="shares" stroke="#0ea5e9" strokeWidth={1.5} dot={false} name="Shares" />
-                <Line type="basis" dataKey="saves" stroke="#8b5cf6" strokeWidth={1.5} dot={false} name="Saves" />
-                <Line type="basis" dataKey="comments" stroke="#10b981" strokeWidth={1.5} dot={false} name="Comments" />
+                <Line type="monotone" dataKey="views" stroke="#4f46e5" strokeWidth={2} dot={false} name="Views" />
+                <Line type="monotone" dataKey="likes" stroke="#ec4899" strokeWidth={1.5} dot={false} name="Likes" />
+                <Line type="monotone" dataKey="shares" stroke="#0ea5e9" strokeWidth={1.5} dot={false} name="Shares" />
+                <Line type="monotone" dataKey="saves" stroke="#8b5cf6" strokeWidth={1.5} dot={false} name="Saves" />
+                <Line type="monotone" dataKey="comments" stroke="#10b981" strokeWidth={1.5} dot={false} name="Comments" />
               </LineChart>
             </ResponsiveContainer>
           </ErrorBoundary>
