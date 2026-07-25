@@ -1,37 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { APIsPage } from "./pages/APIsPage";
-import { BundlesPage } from "./pages/BundlesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewOrderPage } from "./pages/NewOrderPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { RatiosPage } from "./pages/RatiosPage";
 import type {
-  ApiPanel,
-  Bundle,
   CreatedOrder,
   EngagementRatios, 
   RatioPreset,
   RunStatus,
 } from "./types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
-import { fetchServices, fetchPanelPricingMetadata, updateOrderControl, fetchOrderStatus } from "./utils/api";
+import { updateOrderControl, fetchOrderStatus } from "./utils/api";
 import { cn } from "./utils/cn";
 
 type NavKey =
   | "dashboard"
   | "new-order"
   | "orders"
-  | "apis"
-  | "bundles"
   | "ratios";
 
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
   { key: "new-order", label: "New Order", description: "Create a campaign" },
   { key: "orders", label: "Orders", description: "Manage active orders" },
-  { key: "apis", label: "APIs", description: "API connections" },
-  { key: "bundles", label: "Bundles", description: "Service bundles" },
   { key: "ratios", label: "Ratios", description: "Engagement presets" },
 ];
 
@@ -137,34 +129,6 @@ function hydrateOrderDates(orders: CreatedOrder[]): CreatedOrder[] {
   });
 }
 
-function hydrateApis(apis: ApiPanel[]): ApiPanel[] {
-  return apis.map((api) => ({
-    ...api,
-    services: Array.isArray(api.services) ? api.services : [],
-    currency: typeof api.currency === "string" ? api.currency.toUpperCase() : undefined,
-    exchangeRateToInr: Number.isFinite(api.exchangeRateToInr) ? api.exchangeRateToInr : undefined,
-    currencySource: api.currencySource,
-    exchangeRateUpdatedAt: api.exchangeRateUpdatedAt,
-    lastFetchError: api.lastFetchError,
-    lastFetchAt: api.lastFetchAt,
-  }));
-}
-
-function hydrateBundles(bundles: Bundle[]): Bundle[] {
-  return bundles.map((bundle) => ({
-    ...bundle,
-    apiId: bundle.apiId ?? "",
-    serviceIds: {
-      views: bundle.serviceIds?.views ?? "",
-      likes: bundle.serviceIds?.likes ?? "",
-      shares: bundle.serviceIds?.shares ?? "",
-      saves: bundle.serviceIds?.saves ?? "",
-      comments: bundle.serviceIds?.comments ?? "",
-      reposts: bundle.serviceIds?.reposts ?? "",
-    },
-  }));
-}
-
 export default function App() {
   const [activePage, setActivePage] = useState<NavKey>(() => {
     const saved = localStorage.getItem("dev-smm-active-page");
@@ -172,8 +136,6 @@ export default function App() {
       saved === "dashboard" ||
       saved === "new-order" ||
       saved === "orders" ||
-      saved === "apis" ||
-      saved === "bundles" ||
       saved === "ratios"
     ) {
       return saved;
@@ -185,12 +147,6 @@ export default function App() {
   const [ordersNotice, setOrdersNotice] = useState("");
   const [orders, setOrders] = useState<CreatedOrder[]>(() =>
     hydrateOrderDates(readStorage<CreatedOrder[]>("dev-smm-orders", []))
-  );
-  const [apis, setApis] = useState<ApiPanel[]>(() =>
-    hydrateApis(readStorage<ApiPanel[]>("dev-smm-apis", []))
-  );
-  const [bundles, setBundles] = useState<Bundle[]>(() =>
-    hydrateBundles(readStorage<Bundle[]>("dev-smm-bundles", []))
   );
   const [activeRatios, setActiveRatios] = useState<EngagementRatios>(() =>
     readStorage<EngagementRatios>(
@@ -204,7 +160,6 @@ export default function App() {
   const [cloneSourceOrder, setCloneSourceOrder] = useState<CreatedOrder | null>(
     null
   );
-  const [fetchingApiId, setFetchingApiId] = useState<string | null>(null);
   const [controllingOrderId, setControllingOrderId] = useState<string | null>(
     null
   );
@@ -233,16 +188,6 @@ export default function App() {
     },
     []
   );
-
-  const persistApis = useCallback((next: ApiPanel[]) => {
-    setApis(next);
-    localStorage.setItem("dev-smm-apis", JSON.stringify(next));
-  }, []);
-
-  const persistBundles = useCallback((next: Bundle[]) => {
-    setBundles(next);
-    localStorage.setItem("dev-smm-bundles", JSON.stringify(next));
-  }, []);
 
   const persistActiveRatios = useCallback((next: EngagementRatios) => {
     setActiveRatios(next);
@@ -390,17 +335,12 @@ export default function App() {
     if (activePage === "new-order") {
       return (
         <NewOrderPage
-          apis={apis}
-          bundles={bundles}
           orders={orders}
           prefillOrder={cloneSourceOrder}
           activeRatios={activeRatios}
           onCreateOrder={(order) =>
             persistOrders((prev) => [order, ...prev])
           }
-          onPricingMetadataUpdate={(apiId, metadata) => {
-            persistApis(apis.map((api) => api.id === apiId ? { ...api, ...metadata } : api));
-          }}
           onNavigateToOrders={(notice) => {
             if (notice) setOrdersNotice(notice);
             navigateToPage("orders");
@@ -419,8 +359,6 @@ export default function App() {
           orders={orders}
           notice={ordersNotice}
           controllingOrderId={controllingOrderId}
-          apis={apis}
-          bundles={bundles}
           onCloneOrder={(order) => {
             setCloneSourceOrder(order);
             navigateToPage("new-order");
@@ -515,216 +453,41 @@ export default function App() {
       );
     }
 
-    if (activePage === "apis") {
-      return (
-        <APIsPage
-          apis={apis}
-          onAddApi={(api) => {
-            const next: ApiPanel[] = [
-              ...apis,
-              {
-                id: `api-${Date.now()}`,
-                name: api.name,
-                url: api.url,
-                key: api.key,
-                currency: api.currency,
-                currencySource: api.currency ? "user" : undefined,
-                status: "Active",
-                services: [],
-              },
-            ];
-            persistApis(next);
-          }}
-          onEditApi={(id, api) => {
-            const next: ApiPanel[] = apis.map((item) =>
-              item.id === id
-                ? {
-                    ...item,
-                    name: api.name,
-                    url: api.url,
-                    key: api.key,
-                    currency: api.currency,
-                    // Any connection/currency edit requires revalidation before showing cost.
-                    exchangeRateToInr: undefined,
-                    currencySource: api.currency ? "user" : undefined,
-                    exchangeRateUpdatedAt: undefined,
-                  }
-                : item
-            );
-            persistApis(next);
-          }}
-          onDeleteApi={(id) => {
-            persistApis(apis.filter((api) => api.id !== id));
-          }}
-          onToggleStatus={(id) => {
-            const next: ApiPanel[] = apis.map((api) =>
-              api.id === id
-                ? {
-                    ...api,
-                    status:
-                      api.status === "Active" ? "Inactive" : "Active",
-                  }
-                : api
-            );
-            persistApis(next);
-          }}
-          onFetchServices={async (id) => {
-            const targetApi = apis.find((api) => api.id === id);
-            if (!targetApi) return;
-            setFetchingApiId(id);
-            try {
-              const services = await fetchServices(targetApi.url, targetApi.key);
-
-              let pricing = await fetchPanelPricingMetadata(
-                targetApi.url,
-                targetApi.key,
-                targetApi.currency
-              );
-              let currencySource: "panel" | "user" | undefined =
-                pricing.currencySource ?? targetApi.currencySource;
-
-              // Many SMM APIs omit currency. Never guess from panel name or rate size.
-              if (!pricing.currency) {
-                const entered = window.prompt(
-                  `${targetApi.name} did not report its account currency. Enter its 3-letter currency code (for example USD, INR, EUR):`,
-                  targetApi.currency || ""
-                );
-                const confirmedCurrency = String(entered || "").trim().toUpperCase();
-                if (!/^[A-Z]{3}$/.test(confirmedCurrency)) {
-                  throw new Error("Services synced, but cost is disabled until a valid 3-letter panel currency is confirmed.");
-                }
-                pricing = await fetchPanelPricingMetadata(
-                  targetApi.url,
-                  targetApi.key,
-                  confirmedCurrency
-                );
-                currencySource = "user";
-              }
-
-              const next = apis.map((api) =>
-                api.id === id
-                  ? {
-                      ...api,
-                      services,
-                      currency: pricing.currency || undefined,
-                      currencySource,
-                      exchangeRateToInr: pricing.exchangeRateToInr || undefined,
-                      exchangeRateUpdatedAt: pricing.exchangeRateUpdatedAt || undefined,
-                      lastFetchAt: new Date().toISOString(),
-                      lastFetchError: undefined,
-                    }
-                  : api
-              );
-              persistApis(next);
-            } catch (error) {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch services";
-              const next = apis.map((api) =>
-                api.id === id ? { ...api, lastFetchError: message } : api
-              );
-              persistApis(next);
-            } finally {
-              setFetchingApiId(null);
-            }
-          }}
-          fetchingApiId={fetchingApiId}
-        />
-      );
-    }
-
-    if (activePage === "ratios") {
-      return (
-        <RatiosPage
-          activeRatios={activeRatios}
-          presets={ratioPresets}
-          onSaveActive={(ratios) => persistActiveRatios(ratios)}
-          onResetActive={() => persistActiveRatios(DEFAULT_ENGAGEMENT_RATIOS)}
-          onSavePreset={(name, ratios) => {
-            const next: RatioPreset[] = [
-              {
-                id: `ratio-${Date.now()}`,
-                name,
-                ratios,
-                createdAt: new Date().toISOString(),
-              },
-              ...ratioPresets,
-            ];
-            persistRatioPresets(next);
-          }}
-          onDeletePreset={(id) => {
-            persistRatioPresets(ratioPresets.filter((p) => p.id !== id));
-          }}
-          onApplyPreset={(id) => {
-            const p = ratioPresets.find((x) => x.id === id);
-            if (p) persistActiveRatios(p.ratios);
-          }}
-        />
-      );
-    }
-
     return (
-      <BundlesPage
-        apis={apis}
-        bundles={bundles}
-        onAddBundle={(bundle) => {
-          const next: Bundle[] = [
-            ...bundles,
+      <RatiosPage
+        activeRatios={activeRatios}
+        presets={ratioPresets}
+        onSaveActive={(ratios) => persistActiveRatios(ratios)}
+        onResetActive={() => persistActiveRatios(DEFAULT_ENGAGEMENT_RATIOS)}
+        onSavePreset={(name, ratios) => {
+          const next: RatioPreset[] = [
             {
-              id: `bundle-${Date.now()}`,
-              apiId: bundle.apiId,
-              name: bundle.name,
-              serviceIds: {
-                views: bundle.views,
-                likes: bundle.likes,
-                shares: bundle.shares,
-                saves: bundle.saves,
-                comments: bundle.comments,
-                reposts: bundle.reposts,
-              },
+              id: `ratio-${Date.now()}`,
+              name,
+              ratios,
+              createdAt: new Date().toISOString(),
             },
+            ...ratioPresets,
           ];
-          persistBundles(next);
+          persistRatioPresets(next);
         }}
-        onUpdateBundle={(id, bundle) => {
-          const next: Bundle[] = bundles.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  apiId: bundle.apiId,
-                  name: bundle.name,
-                  serviceIds: {
-                    views: bundle.views,
-                    likes: bundle.likes,
-                    shares: bundle.shares,
-                    saves: bundle.saves,
-                    comments: bundle.comments,
-                    reposts: bundle.reposts,
-                  },
-                }
-              : item
-          );
-          persistBundles(next);
+        onDeletePreset={(id) => {
+          persistRatioPresets(ratioPresets.filter((p) => p.id !== id));
         }}
-        onDeleteBundle={(id) => {
-          persistBundles(bundles.filter((bundle) => bundle.id !== id));
+        onApplyPreset={(id) => {
+          const p = ratioPresets.find((x) => x.id === id);
+          if (p) persistActiveRatios(p.ratios);
         }}
       />
     );
   }, [
     activePage,
-    apis,
-    bundles,
     orders,
-    fetchingApiId,
     controllingOrderId,
     ordersNotice,
     cloneSourceOrder,
     navigateToPage,
     persistOrders,
-    persistApis,
-    persistBundles,
     syncOrdersWithBackend,
     activeRatios,
     ratioPresets,
@@ -733,7 +496,6 @@ export default function App() {
   ]);
 
   const currentItem = NAV_ITEMS.find((item) => item.key === activePage)!;
-  const activeIndex = NAV_ITEMS.findIndex((item) => item.key === activePage);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
