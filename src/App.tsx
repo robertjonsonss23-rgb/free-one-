@@ -6,7 +6,7 @@ import { OrdersPage } from "./pages/OrdersPage";
 import { RatiosPage } from "./pages/RatiosPage";
 import { WalletPage } from "./pages/WalletPage";
 import type {
-  CreatedOrder, 
+  CreatedOrder,
   EngagementRatios, 
   RatioPreset,
   RunStatus,
@@ -20,6 +20,8 @@ import {
   type AuthUser,
 } from "./utils/api";
 import { Button, Spinner } from "./components/ui";
+import { ThemeToggle } from "./components/ThemeToggle";
+import type { Theme } from "./utils/theme";
 import { cn } from "./utils/cn";
 
 type NavKey =
@@ -142,9 +144,11 @@ function hydrateOrderDates(orders: CreatedOrder[]): CreatedOrder[] {
 interface AppProps {
   user: AuthUser;
   onSignOut: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
-export default function App({ user, onSignOut }: AppProps) {
+export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps) {
   const [activePage, setActivePage] = useState<NavKey>(() => {
     const saved = localStorage.getItem("dev-smm-active-page");
     if (
@@ -634,6 +638,7 @@ export default function App({ user, onSignOut }: AppProps) {
               <p className="text-[11px] font-medium text-slate-600">Auto-sync</p>
               <p className="text-[11px] text-slate-500">Every 5 minutes</p>
             </div>
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
             <button
               type="button"
               onClick={() => navigateToPage("wallet")}
@@ -684,6 +689,8 @@ export default function App({ user, onSignOut }: AppProps) {
               <p className="text-[10px] text-slate-500">{currentItem.label}</p>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
           <button
             type="button"
             onClick={() => setMobileNavOpen((prev) => !prev)}
@@ -709,6 +716,7 @@ export default function App({ user, onSignOut }: AppProps) {
               )}
             />
           </button>
+          </div>
         </div>
 
         {/* =============== MOBILE DRAWER =============== */}
