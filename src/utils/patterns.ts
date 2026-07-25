@@ -456,6 +456,41 @@ function resolvePresetProfile(preset: QuickPatternPreset | null): PresetProfile 
   if (preset === "slow-burn") {
     return { patternType: "smooth-s-curve", runMultiplier: 1.2, durationMultiplier: 1.35, varianceMultiplier: 0.65, targetAverageViews: 150 };
   }
+
+  /* ---- Whop: five steady, low-variance delivery shapes ---- */
+  if (preset === "whop-1") {
+    return { patternType: "smooth-s-curve", runMultiplier: 1.05, durationMultiplier: 1.0, varianceMultiplier: 0.55, targetAverageViews: 175 };
+  }
+  if (preset === "whop-2") {
+    return { patternType: "steady-climb", runMultiplier: 1.15, durationMultiplier: 1.1, varianceMultiplier: 0.5, targetAverageViews: 165 };
+  }
+  if (preset === "whop-3") {
+    return { patternType: "exponential", runMultiplier: 0.95, durationMultiplier: 0.9, varianceMultiplier: 0.7, targetAverageViews: 200 };
+  }
+  if (preset === "whop-4") {
+    return { patternType: "natural-decay", runMultiplier: 1.1, durationMultiplier: 1.2, varianceMultiplier: 0.6, targetAverageViews: 160 };
+  }
+  if (preset === "whop-5") {
+    return { patternType: "wave-pattern", runMultiplier: 1.2, durationMultiplier: 1.25, varianceMultiplier: 0.62, targetAverageViews: 155 };
+  }
+
+  /* ---- Clipster: five punchier, front-loaded shapes ---- */
+  if (preset === "clipster-1") {
+    return { patternType: "rocket-launch", runMultiplier: 0.85, durationMultiplier: 0.7, varianceMultiplier: 1.1, targetAverageViews: 225 };
+  }
+  if (preset === "clipster-2") {
+    return { patternType: "viral-spike", runMultiplier: 0.8, durationMultiplier: 0.75, varianceMultiplier: 1.25, targetAverageViews: 240 };
+  }
+  if (preset === "clipster-3") {
+    return { patternType: "micro-burst", runMultiplier: 0.9, durationMultiplier: 0.8, varianceMultiplier: 1.15, targetAverageViews: 210 };
+  }
+  if (preset === "clipster-4") {
+    return { patternType: "fibonacci-spiral", runMultiplier: 0.95, durationMultiplier: 0.85, varianceMultiplier: 1.2, targetAverageViews: 205 };
+  }
+  if (preset === "clipster-5") {
+    return { patternType: "heartbeat", runMultiplier: 1.0, durationMultiplier: 0.95, varianceMultiplier: 1.05, targetAverageViews: 190 };
+  }
+
   return { runMultiplier: 1, durationMultiplier: 1, varianceMultiplier: 1, targetAverageViews: 180 };
 }
 
@@ -863,6 +898,22 @@ function intervalPresetFactor(preset: QuickPatternPreset | null, t: number): num
   if (preset === "fast-start") return 0.65 + t * 0.9;
   if (preset === "trending-push") return 1.1 - Math.exp(-Math.pow((t - 0.58) / 0.22, 2)) * 0.3;
   if (preset === "slow-burn") return 1.2 + t * 0.25;
+
+  // Whop — gentle, evenly paced delivery
+  if (preset === "whop-1") return 1.0 + t * 0.15;
+  if (preset === "whop-2") return 0.95 + t * 0.3;
+  if (preset === "whop-3") return 1.25 - t * 0.35;
+  if (preset === "whop-4") return 0.85 + t * 0.55;
+  if (preset === "whop-5") return 1.05 + Math.sin(t * Math.PI * 2) * 0.18;
+
+  // Clipster — front-loaded bursts that ease off
+  if (preset === "clipster-1") return 0.6 + t * 1.0;
+  if (preset === "clipster-2") return 1.15 - Math.exp(-Math.pow((t - 0.3) / 0.18, 2)) * 0.5;
+  if (preset === "clipster-3") return 0.7 + Math.abs(Math.sin(t * Math.PI * 3)) * 0.5;
+  if (preset === "clipster-4") return 0.65 + Math.pow(t, 1.6) * 0.95;
+  if (preset === "clipster-5") return 1.0 - Math.exp(-Math.pow((t - 0.45) / 0.12, 2)) * 0.35
+                                        - Math.exp(-Math.pow((t - 0.72) / 0.1, 2)) * 0.25;
+
   return 1;
 }
 
