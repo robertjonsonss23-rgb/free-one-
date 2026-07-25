@@ -4,13 +4,18 @@ import "./index.css";
 import App from "./App.tsx";
 import { AdminPage } from "./pages/AdminPage.tsx";
 import { AuthPage } from "./pages/AuthPage.tsx";
-import { ErrorBoundary } from "./components/ErrorBoundary.tsx"; 
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Spinner } from "./components/ui.tsx";
 import {
   fetchCurrentUser,
   setUnauthorizedHandler,
   type AuthUser,
 } from "./utils/api.ts";
+import { applyTheme, resolveInitialTheme, useTheme } from "./utils/theme.ts";
+
+// Apply the saved theme before React paints, so there is no white flash.
+applyTheme(resolveInitialTheme());
+document.documentElement.classList.add("theme-ready");
 
 function useHash(): string {
   const [hash, setHash] = useState<string>(
@@ -26,6 +31,7 @@ function useHash(): string {
 
 function Root() {
   const hash = useHash();
+  const { theme, toggleTheme } = useTheme();
   const isAdminRoute = hash === "#admin" || hash === "#/admin";
 
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -47,7 +53,7 @@ function Root() {
   }, [handleUnauthorized]);
 
   // The admin area has its own password and is independent of user accounts.
-  if (isAdminRoute) return <AdminPage />;
+  if (isAdminRoute) return <AdminPage theme={theme} onToggleTheme={toggleTheme} />;
 
   if (checking) {
     return (
@@ -60,9 +66,18 @@ function Root() {
     );
   }
 
-  if (!user) return <AuthPage onAuthenticated={setUser} />;
+  if (!user) {
+    return <AuthPage onAuthenticated={setUser} theme={theme} onToggleTheme={toggleTheme} />;
+  }
 
-  return <App user={user} onSignOut={() => setUser(null)} />;
+  return (
+    <App
+      user={user}
+      onSignOut={() => setUser(null)}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+    />
+  );
 }
 
 // Global fallback for uncaught runtime errors so the screen never stays white.
