@@ -3,15 +3,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewOrderPage } from "./pages/NewOrderPage";
 import { OrdersPage } from "./pages/OrdersPage";
-import { RatiosPage } from "./pages/RatiosPage";
 import { WalletPage } from "./pages/WalletPage";
 import type {
   CreatedOrder,
-  EngagementRatios, 
-  RatioPreset,
   RunStatus,
 } from "./types/order";
-import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
 import {
   updateOrderControl,
   fetchOrderStatus,
@@ -28,15 +24,13 @@ type NavKey =
   | "dashboard"
   | "new-order"
   | "orders"
-  | "wallet"
-  | "ratios";
+  | "wallet";
 
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
   { key: "new-order", label: "New Order", description: "Create a campaign" },
   { key: "orders", label: "Orders", description: "Manage active orders" },
   { key: "wallet", label: "Wallet", description: "Balance & top-ups" },
-  { key: "ratios", label: "Ratios", description: "Engagement presets" },
 ];
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -155,8 +149,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       saved === "dashboard" ||
       saved === "new-order" ||
       saved === "orders" ||
-      saved === "wallet" ||
-      saved === "ratios"
+      saved === "wallet"
     ) {
       return saved;
     }
@@ -173,15 +166,6 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
   );
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [balance, setBalance] = useState<number>(user.balance ?? 0);
-  const [activeRatios, setActiveRatios] = useState<EngagementRatios>(() =>
-    readStorage<EngagementRatios>(
-      "dev-smm-active-ratios",
-      DEFAULT_ENGAGEMENT_RATIOS
-    )
-  );
-  const [ratioPresets, setRatioPresets] = useState<RatioPreset[]>(() =>
-    readStorage<RatioPreset[]>("dev-smm-ratio-presets", [])
-  );
   const [cloneSourceOrder, setCloneSourceOrder] = useState<CreatedOrder | null>(
     null
   );
@@ -256,15 +240,6 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     return () => { cancelled = true; };
   }, [ordersKey]);
 
-  const persistActiveRatios = useCallback((next: EngagementRatios) => {
-    setActiveRatios(next);
-    localStorage.setItem("dev-smm-active-ratios", JSON.stringify(next));
-  }, []);
-
-  const persistRatioPresets = useCallback((next: RatioPreset[]) => {
-    setRatioPresets(next);
-    localStorage.setItem("dev-smm-ratio-presets", JSON.stringify(next));
-  }, []);
 
   const syncOrdersWithBackend = useCallback(
     async (force = false) => {
@@ -404,7 +379,6 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
         <NewOrderPage
           orders={orders}
           prefillOrder={cloneSourceOrder}
-          activeRatios={activeRatios}
           onCreateOrder={(order) =>
             persistOrders((prev) => [order, ...prev])
           }
@@ -422,9 +396,6 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       return <WalletPage onBalanceChange={setBalance} />;
     }
 
-    if (activePage === "dashboard") {
-      return <DashboardPage orders={orders} />;
-    }
 
     if (activePage === "orders") {
       if (ordersLoading && orders.length === 0) {
@@ -536,33 +507,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       );
     }
 
-    return (
-      <RatiosPage
-        activeRatios={activeRatios}
-        presets={ratioPresets}
-        onSaveActive={(ratios) => persistActiveRatios(ratios)}
-        onResetActive={() => persistActiveRatios(DEFAULT_ENGAGEMENT_RATIOS)}
-        onSavePreset={(name, ratios) => {
-          const next: RatioPreset[] = [
-            {
-              id: `ratio-${Date.now()}`,
-              name,
-              ratios,
-              createdAt: new Date().toISOString(),
-            },
-            ...ratioPresets,
-          ];
-          persistRatioPresets(next);
-        }}
-        onDeletePreset={(id) => {
-          persistRatioPresets(ratioPresets.filter((p) => p.id !== id));
-        }}
-        onApplyPreset={(id) => {
-          const p = ratioPresets.find((x) => x.id === id);
-          if (p) persistActiveRatios(p.ratios);
-        }}
-      />
-    );
+    return <DashboardPage orders={orders} />;
   }, [
     activePage,
     orders,
@@ -574,10 +519,6 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     syncOrdersWithBackend,
     ordersLoading,
     balance,
-    activeRatios,
-    ratioPresets,
-    persistActiveRatios,
-    persistRatioPresets,
   ]);
 
   const currentItem = NAV_ITEMS.find((item) => item.key === activePage)!;
