@@ -88,6 +88,52 @@ if (!(import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim()) {
 
 console.info(`[config] Backend: ${BACKEND_BASE_URL}`);
 
+/* ============================================================
+   AUTH TOKEN
+   Stored in localStorage so the session survives a refresh and
+   the user stays signed in on this device.
+   ============================================================ */
+const AUTH_TOKEN_KEY = "truesmm-auth-token";
+
+export function getAuthToken(): string {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY) || ""; } catch { return ""; }
+}
+export function setAuthToken(token: string) {
+  try { localStorage.setItem(AUTH_TOKEN_KEY, token); } catch { /* ignore */ }
+}
+export function clearAuthToken() {
+  try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* ignore */ }
+}
+
+/** Headers for an authenticated JSON request. */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = getAuthToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
+/** Called when the server reports the session is no longer valid. */
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+
+/** Wrapper that signs the user out automatically on a 401. */
+async function authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(input, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
+  });
+  if (response.status === 401) {
+    clearAuthToken();
+    onUnauthorized?.();
+  }
+  return response;
+}
+
 interface RawService {
   service?: string | number;
   id?: string | number;
@@ -130,99 +176,6 @@ function cleanRateString(val: unknown): string {
   return Number.isFinite(parsed) ? String(parsed) : "0";
 }
 
-export interface PanelPricingMetadata {
-  currency: string | null;
-  currencySource: "panel" | null;
-  exchangeRateToInr: number | null;
-  exchangeRateUpdatedAt: string | null;
-  balance?: number | null;
-}
-
-export async function fetchPanelPricingMetadata(
-  apiUrl: string,
-  apiKey: string,
-  currency?: string
-): Promise<PanelPricingMetadata> {
-  const endpoint = `${BACKEND_BASE_URL}/api/panel/pricing-meta`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiUrl, apiKey, currency }),
-  });
-  const text = await response.text();
-  let payload: Record<string, unknown> = {};
-  try { payload = JSON.parse(text) as Record<string, unknown>; } catch { /* handled below */ }
-  if (!response.ok) {
-    throw new Error(String(payload.error || `Could not detect panel currency (HTTP ${response.status})`));
-  }
-  return {
-    currency: typeof payload.currency === "string" ? payload.currency : null,
-    currencySource: payload.currencySource === "panel" ? "panel" : null,
-    exchangeRateToInr: typeof payload.exchangeRateToInr === "number" ? payload.exchangeRateToInr : null,
-    exchangeRateUpdatedAt: typeof payload.exchangeRateUpdatedAt === "string" ? payload.exchangeRateUpdatedAt : null,
-    balance: typeof payload.balance === "number" ? payload.balance : null,
-  };
-}
-
-export async function fetchServices(apiUrl: string, apiKey: string): Promise<ApiService[]> {
-  const endpoint = `${BACKEND_BASE_URL}/api/services`;
-  console.info("[Fetch Services] Sending request", { endpoint, apiUrl });
-
-  let response: Response;
-  try {
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiUrl, apiKey }),
-    });
-  } catch (error) {
-    console.error("[Fetch Services] Network request failed", error);
-    throw new Error("Cannot reach backend /api/services. Check backend availability and VITE_BACKEND_URL.");
-  }
-
-  const responseText = await response.text();
-  const payload = ((): unknown => {
-    try { return JSON.parse(responseText); } catch { return null; }
-  })();
-
-  const payloadObject = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
-
-  if (!response.ok) {
-    console.error("[Fetch Services] Failed response", {
-      status: response.status,
-      payload,
-      bodyPreview: responseText.slice(0, 500),
-    });
-    throw new Error(String(payloadObject?.error || `Failed to fetch services (HTTP ${response.status})`));
-  }
-
-  const directRows = Array.isArray(payload) ? payload : [];
-  const wrappedServices = payloadObject?.services;
-  const rows: RawService[] = Array.isArray(wrappedServices)
-    ? (wrappedServices as RawService[])
-    : wrappedServices && typeof wrappedServices === "object" && Array.isArray((wrappedServices as { data?: unknown[] }).data)
-      ? (wrappedServices as { data: RawService[] }).data
-      : (directRows as RawService[]);
-
-  console.info("[Fetch Services] Response received", { count: rows.length });
-
-  return rows
-    .map((service) => {
-      const id = String(service.service ?? service.id ?? (service as any).services ?? (service as any).service_id ?? (service as any).serviceId ?? "").trim();
-      const name = String(service.name ?? "").trim();
-      if (!id || !name) return null;
-      return {
-        id,
-        name,
-        type: String(service.type ?? "").trim(),
-        rate: cleanRateString(service.rate ?? service.price ?? service.cost ?? (service as any).amount ?? (service as any).charge),
-        min: toNumber(service.min),
-        max: toNumber(service.max),
-      } satisfies ApiService;
-    })
-    .filter((service): service is ApiService => Boolean(service));
-}
-
 export async function createSmmOrder(payload: CreateOrderPayload): Promise<CreateOrderResult> {
   const endpoint = `${BACKEND_BASE_URL}/api/order`;
   console.info("[Create Order] Sending request", {
@@ -234,9 +187,8 @@ export async function createSmmOrder(payload: CreateOrderPayload): Promise<Creat
 
   let response: Response;
   try {
-    response = await fetch(endpoint, {
+    response = await authedFetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
   } catch (error) {
@@ -329,9 +281,8 @@ export async function updateOrderControl(payload: {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetch(endpoint, {
+      const response = await authedFetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
@@ -380,10 +331,7 @@ export async function fetchOrderRuns(schedulerOrderId: string): Promise<FetchOrd
   const endpoint = `${BACKEND_BASE_URL}/api/order/runs/${schedulerOrderId}`;
 
   try {
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
+    const response = await authedFetch(endpoint, { method: "GET" });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch runs (HTTP ${response.status})`);
@@ -405,10 +353,7 @@ export async function fetchOrderStatus(schedulerOrderId: string): Promise<OrderS
   const endpoint = `${BACKEND_BASE_URL}/api/order/status/${schedulerOrderId}`;
 
   try {
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
+    const response = await authedFetch(endpoint, { method: "GET" });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch order status (HTTP ${response.status})`);
@@ -437,10 +382,7 @@ export async function fetchAllOrdersStatus(): Promise<{
   const endpoint = `${BACKEND_BASE_URL}/api/orders/status`;
 
   try {
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
+    const response = await authedFetch(endpoint, { method: "GET" });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch orders status (HTTP ${response.status})`);
@@ -472,9 +414,8 @@ export async function updateMinViewsSetting(
   const endpoint = `${BACKEND_BASE_URL}/api/settings/min-views`;
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await authedFetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ minViewsPerRun }),
     });
 
@@ -532,10 +473,7 @@ export async function checkProviderOrderStatus(schedulerOrderId: string): Promis
   const endpoint = `${BACKEND_BASE_URL}/api/order/provider-status/${schedulerOrderId}`;
 
   try {
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
+    const response = await authedFetch(endpoint, { method: "GET" });
 
     if (!response.ok) {
       throw new Error(`Failed to check provider status (HTTP ${response.status})`);
@@ -683,4 +621,143 @@ export async function fetchAdminServices(
       } satisfies ApiService;
     })
     .filter((s): s is ApiService => Boolean(s));
+}
+
+/* ============================================================
+   USER ACCOUNTS (email + password)
+   ============================================================ */
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt?: string;
+}
+
+interface AuthResult {
+  token: string;
+  user: AuthUser;
+}
+
+function normalizeUser(raw: unknown): AuthUser {
+  const o = (raw || {}) as Record<string, unknown>;
+  return {
+    id: String(o.id ?? ""),
+    email: String(o.email ?? ""),
+    name: String(o.name ?? ""),
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
+  };
+}
+
+export async function signup(
+  email: string,
+  password: string,
+  name?: string
+): Promise<AuthResult> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, name }),
+  });
+  const payload = await parseOrThrow(response);
+  const token = String(payload.token || "");
+  setAuthToken(token);
+  return { token, user: normalizeUser(payload.user) };
+}
+
+export async function login(email: string, password: string): Promise<AuthResult> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const payload = await parseOrThrow(response);
+  const token = String(payload.token || "");
+  setAuthToken(token);
+  return { token, user: normalizeUser(payload.user) };
+}
+
+/** Restore a session on page load. Returns null when not signed in. */
+export async function fetchCurrentUser(): Promise<AuthUser | null> {
+  if (!getAuthToken()) return null;
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/api/auth/me`, {
+      headers: authHeaders(),
+    });
+    if (response.status === 401) { clearAuthToken(); return null; }
+    if (!response.ok) return null;
+    const payload = (await response.json()) as Record<string, unknown>;
+    return normalizeUser(payload.user);
+  } catch {
+    // Network failure: keep the token so a refresh can retry.
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${BACKEND_BASE_URL}/api/auth/logout`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+  } catch { /* logging out locally is what matters */ }
+  clearAuthToken();
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/auth/change-password`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  const payload = await parseOrThrow(response);
+  if (typeof payload.token === "string") setAuthToken(payload.token);
+}
+
+/* ---- Admin: user management ---- */
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string | null;
+  lastLoginAt: string | null;
+  orderCount: number;
+}
+
+export async function fetchAdminUsers(password: string): Promise<AdminUser[]> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users`, {
+    headers: { "x-admin-password": password },
+  });
+  const payload = await parseOrThrow(response);
+  const rows = Array.isArray(payload.users) ? payload.users : [];
+  return rows.map((raw) => {
+    const o = raw as Record<string, unknown>;
+    return {
+      id: String(o.id ?? ""),
+      email: String(o.email ?? ""),
+      name: String(o.name ?? ""),
+      isActive: o.isActive !== false,
+      createdAt: typeof o.createdAt === "string" ? o.createdAt : null,
+      lastLoginAt: typeof o.lastLoginAt === "string" ? o.lastLoginAt : null,
+      orderCount: Number(o.orderCount) || 0,
+    };
+  });
+}
+
+export async function setUserActive(
+  password: string,
+  userId: string,
+  isActive: boolean
+): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users/${userId}/active`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ isActive }),
+  });
+  await parseOrThrow(response);
 }
