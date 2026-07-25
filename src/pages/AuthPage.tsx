@@ -2,14 +2,18 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Button, Input, InfoBanner } from "../components/ui";
 import { login, signup, type AuthUser } from "../utils/api";
+import { ThemeToggle } from "../components/ThemeToggle";
+import type { Theme } from "../utils/theme";
 
 interface AuthPageProps {
   onAuthenticated: (user: AuthUser) => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
 type Mode = "login" | "signup";
 
-export function AuthPage({ onAuthenticated }: AuthPageProps) {
+export function AuthPage({ onAuthenticated, theme, onToggleTheme }: AuthPageProps) {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -203,9 +207,12 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
           </p>
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Your campaigns are saved to your account and available on any device.
-        </p>
+        <div className="mt-6 flex flex-col items-center gap-3">
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
+          <p className="text-center text-xs text-slate-400">
+            Your campaigns are saved to your account and available on any device.
+          </p>
+        </div>
       </motion.div>
     </div>
   );
