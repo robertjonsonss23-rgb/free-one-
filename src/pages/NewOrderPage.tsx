@@ -12,7 +12,7 @@ import type {
   QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
-import { createSmmOrder, fetchPanelPricingMetadata } from "../utils/api"; 
+import { createSmmOrder, fetchPanelPricingMetadata, BACKEND_BASE_URL } from "../utils/api"; 
 import { createPatternPlan } from "../utils/patterns";
 import {
   Button,
@@ -161,8 +161,7 @@ export function NewOrderPage({
   useEffect(() => {
     const fetchMinViews = async () => {
       try {
-        const backendUrl = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim().replace(/\/$/, "") || "";
-        const response = await fetch(`${backendUrl}/api/settings/min-views`);
+        const response = await fetch(`${BACKEND_BASE_URL}/api/settings/min-views`);
         if (response.ok) {
           const data = await response.json();
           if (data.minViewsPerRun) {
@@ -313,8 +312,7 @@ export function NewOrderPage({
     setMinViewsPerRun(newValue);
     setUseClonedPlan(false);
     setSeed((current) => current + 1);
-    const backendUrl = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim().replace(/\/$/, "") || "";
-    fetch(`${backendUrl}/api/settings/min-views`, {
+    fetch(`${BACKEND_BASE_URL}/api/settings/min-views`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ minViewsPerRun: newValue }),
