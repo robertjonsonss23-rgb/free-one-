@@ -626,6 +626,31 @@ tbody tr:hover {
   --color-violet-100: #2b1f55;
   --color-violet-700: #c4b5fd;
 
+  /* Stone — used by the New Order graph stat cards (Views / Likes /
+     Comments / Shares). Without these the numbers stay near-black and
+     vanish against the dark panel. */
+  --color-stone-50:   #0b0f17;
+  --color-stone-100:  #161c28;
+  --color-stone-200:  #232b3a;
+  --color-stone-300:  #323c4f;
+  --color-stone-400:  #6b7789;
+  --color-stone-500:  #8c98aa;
+  --color-stone-600:  #aab4c4;
+  --color-stone-700:  #c6cedb;
+  --color-stone-800:  #dde3ec;
+  --color-stone-900:  #eef2f7;
+  --color-stone-950:  #ffffff;   /* the big stat numbers -> white */
+
+  /* Orange accents on the graph panel */
+  --color-orange-100: #33220f;
+  --color-orange-200: #4a3116;
+  --color-orange-300: #fdba74;
+  --color-orange-500: #fb923c;
+
+  /* Violet steps beyond the ones already set above */
+  --color-violet-200: #3a2a6b;
+  --color-violet-300: #ddd6fe;
+
   --color-cyan-100:   #16323a;
   --color-cyan-700:   #67e8f9;
   --color-pink-100:   #3a1a2a;
@@ -726,3 +751,14 @@ html.theme-ready body {
 .dark .chart-tooltip-label {
   color: #aab4c4 !important;
 }
+
+/* Opacity modifiers (bg-white/35, shadow-white/40, …) are compiled by
+   Tailwind into literal hex with alpha, so they ignore the variables
+   above. Override the specific ones used on the graph panel. */
+.dark .bg-white\/35 { background-color: rgb(255 255 255 / 0.04) !important; }
+.dark .bg-white\/30 { background-color: rgb(255 255 255 / 0.04) !important; }
+.dark .bg-white\/10 { background-color: rgb(255 255 255 / 0.06) !important; }
+.dark .shadow-white\/40 { --tw-shadow-color: rgb(255 255 255 / 0.04) !important; }
+.dark .border-orange-200\/70 { border-color: rgb(120 84 40 / 0.6) !important; }
+.dark .bg-amber-50\/40 { background-color: rgb(60 46 20 / 0.35) !important; }
+.dark .bg-violet-50\/50 { background-color: rgb(45 32 85 / 0.4) !important; }
