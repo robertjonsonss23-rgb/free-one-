@@ -11,8 +11,14 @@ import type {
   RunStatus,
 } from "./types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
-import { updateOrderControl, fetchOrderStatus, logout, type AuthUser } from "./utils/api";
-import { Button } from "./components/ui";
+import {
+  updateOrderControl,
+  fetchOrderStatus,
+  fetchOrdersForCurrentUser,
+  logout,
+  type AuthUser,
+} from "./utils/api";
+import { Button, Spinner } from "./components/ui";
 import { cn } from "./utils/cn";
 
 type NavKey =
@@ -151,9 +157,13 @@ export default function App({ user, onSignOut }: AppProps) {
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [ordersNotice, setOrdersNotice] = useState("");
+  // Orders cache is namespaced per account so switching users on the same
+  // browser never shows the previous user's campaigns.
+  const ordersKey = `dev-smm-orders:${user.id}`;
   const [orders, setOrders] = useState<CreatedOrder[]>(() =>
-    hydrateOrderDates(readStorage<CreatedOrder[]>("dev-smm-orders", []))
+    hydrateOrderDates(readStorage<CreatedOrder[]>(`dev-smm-orders:${user.id}`, []))
   );
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const [activeRatios, setActiveRatios] = useState<EngagementRatios>(() =>
     readStorage<EngagementRatios>(
       "dev-smm-active-ratios",
@@ -184,16 +194,58 @@ export default function App({ user, onSignOut }: AppProps) {
       if (typeof next === "function") {
         setOrders((prev) => {
           const updated = next(prev);
-          localStorage.setItem("dev-smm-orders", JSON.stringify(updated));
+          localStorage.setItem(ordersKey, JSON.stringify(updated));
           return updated;
         });
       } else {
         setOrders(next);
-        localStorage.setItem("dev-smm-orders", JSON.stringify(next));
+        localStorage.setItem(ordersKey, JSON.stringify(next));
       }
     },
-    []
+    [ordersKey]
   );
+
+  /* Load this account's orders from the server on sign-in. This is what makes
+     campaigns visible after logging in on a different device, where
+     localStorage is empty. Server data is the source of truth. */
+  useEffect(() => {
+    let cancelled = false;
+    setOrdersLoading(true);
+    fetchOrdersForCurrentUser()
+      .then((serverOrders) => {
+        if (cancelled) return;
+        setOrders((localOrders) => {
+          // Keep any richer local copy (it has the original pattern/engagement
+          // detail) but let the server decide which orders exist at all.
+          const byId = new Map(
+            localOrders
+              .filter((o) => o.schedulerOrderId)
+              .map((o) => [o.schedulerOrderId as string, o])
+          );
+          const merged = serverOrders.map((serverOrder) => {
+            const local = byId.get(serverOrder.schedulerOrderId as string);
+            return local
+              ? {
+                  ...local,
+                  status: serverOrder.status,
+                  completedRuns: serverOrder.completedRuns,
+                  runStatuses: serverOrder.runStatuses,
+                  lastUpdatedAt: serverOrder.lastUpdatedAt,
+                }
+              : serverOrder;
+          });
+          localStorage.setItem(ordersKey, JSON.stringify(merged));
+          return merged;
+        });
+      })
+      .catch((error) => {
+        console.error("[Orders] Could not load from server:", error);
+      })
+      .finally(() => {
+        if (!cancelled) setOrdersLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [ordersKey]);
 
   const persistActiveRatios = useCallback((next: EngagementRatios) => {
     setActiveRatios(next);
@@ -218,7 +270,7 @@ export default function App({ user, onSignOut }: AppProps) {
 
       try {
         const currentOrders = hydrateOrderDates(
-          readStorage<CreatedOrder[]>("dev-smm-orders", [])
+          readStorage<CreatedOrder[]>(ordersKey, [])
         );
 
         const activeOrders = currentOrders.filter(
@@ -360,6 +412,16 @@ export default function App({ user, onSignOut }: AppProps) {
     }
 
     if (activePage === "orders") {
+      if (ordersLoading && orders.length === 0) {
+        return (
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <Spinner size="lg" />
+              <p className="text-sm font-medium text-slate-500">Loading your orders…</p>
+            </div>
+          </div>
+        );
+      }
       return (
         <OrdersPage
           orders={orders}
@@ -495,6 +557,7 @@ export default function App({ user, onSignOut }: AppProps) {
     navigateToPage,
     persistOrders,
     syncOrdersWithBackend,
+    ordersLoading,
     activeRatios,
     ratioPresets,
     persistActiveRatios,
