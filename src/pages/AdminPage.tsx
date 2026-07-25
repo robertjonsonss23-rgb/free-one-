@@ -9,7 +9,7 @@ import {
   StatusPill,
 } from "../components/ui";
 import type { ApiService } from "../types/order";
-import { 
+import {
   SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
@@ -23,6 +23,15 @@ import {
   clearStoredAdminPassword,
   fetchAdminUsers,
   setUserActive,
+  fetchAdminDeposits,
+  reviewDeposit,
+  adjustUserWallet,
+  fetchPaymentSettings,
+  savePaymentSettings,
+  type AdminDeposit,
+  type AdminPaymentSettings,
+  type AdminUpiMethod,
+  type AdminCryptoMethod,
   type AdminPanelConfig,
   type ServiceSlot,
   type ServiceLabel,
@@ -54,7 +63,17 @@ export function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
 
-  const [tab, setTab] = useState<"panels" | "services" | "users">("panels");
+  const [tab, setTab] = useState<"panels" | "services" | "payments" | "users">("panels");
+
+  // Payments
+  const [deposits, setDeposits] = useState<AdminDeposit[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [depositFilter, setDepositFilter] = useState<"pending" | "all">("pending");
+  const [depositsLoading, setDepositsLoading] = useState(false);
+  const [depositsError, setDepositsError] = useState("");
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [payment, setPayment] = useState<AdminPaymentSettings | null>(null);
+  const [savingPayment, setSavingPayment] = useState(false);
 
   // Add-panel form
   const [newName, setNewName] = useState("");
@@ -90,6 +109,30 @@ export function AdminPage() {
     applyConfig(await fetchAdminPanelConfig(pw));
   }, [applyConfig]);
 
+  /* ---- Payments ---- */
+  const loadDeposits = useCallback(async (pw: string, filter: "pending" | "all") => {
+    setDepositsLoading(true);
+    setDepositsError("");
+    try {
+      const result = await fetchAdminDeposits(pw, filter);
+      setDeposits(result.deposits);
+      setPendingCount(result.pendingCount);
+    } catch (e) {
+      setDepositsError(e instanceof Error ? e.message : "Could not load deposits.");
+    } finally {
+      setDepositsLoading(false);
+    }
+  }, []);
+
+  const loadPaymentSettings = useCallback(async (pw: string) => {
+    try {
+      setPayment(await fetchPaymentSettings(pw));
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Could not load payment settings.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const saved = getStoredAdminPassword();
     if (!saved) { setBooting(false); return; }
@@ -98,13 +141,15 @@ export function AdminPage() {
         await loadConfig(saved);
         setPassword(saved);
         setAuthed(true);
+        loadDeposits(saved, "pending");
+        loadPaymentSettings(saved);
       } catch {
         clearStoredAdminPassword();
       } finally {
         setBooting(false);
       }
     })();
-  }, [loadConfig]);
+  }, [loadConfig, loadDeposits, loadPaymentSettings]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +162,8 @@ export function AdminPage() {
       await loadConfig(password);
       setStoredAdminPassword(password);
       setAuthed(true);
+      loadDeposits(password, "pending");
+      loadPaymentSettings(password);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Login failed.");
     } finally {
@@ -235,6 +282,111 @@ export function AdminPage() {
       fireToast("danger", e instanceof Error ? e.message : "Save failed.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReview = async (d: AdminDeposit, action: "approve" | "reject") => {
+    const verb = action === "approve" ? "Approve" : "Reject";
+    let note = "";
+    if (action === "reject") {
+      note = prompt(`Why is this rejected? (shown to ${d.userEmail})`) || "";
+    } else if (!confirm(`${verb} ₹${d.amount.toFixed(2)} for ${d.userEmail}?\n\nUTR: ${d.reference}\n\nOnly approve after confirming the money reached your account.`)) {
+      return;
+    }
+    setReviewingId(d.id);
+    try {
+      const result = await reviewDeposit(password, d.id, action, note);
+      fireToast(
+        "success",
+        action === "approve"
+          ? `Approved. ${d.userEmail} now has ₹${(result.newBalance ?? 0).toFixed(2)}.`
+          : "Deposit rejected."
+      );
+      await loadDeposits(password, depositFilter);
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Review failed.");
+      await loadDeposits(password, depositFilter);
+    } finally {
+      setReviewingId(null);
+    }
+  };
+
+  const handleSavePayment = async () => {
+    if (!payment) return;
+    if (payment.upiEnabled && payment.upiMethods.filter((m) => m.isActive).length === 0) {
+      fireToast("danger", "UPI is enabled but no active UPI ID is configured.");
+      return;
+    }
+    if (payment.cryptoEnabled && payment.cryptoMethods.filter((m) => m.isActive).length === 0) {
+      fireToast("danger", "Crypto is enabled but no active address is configured.");
+      return;
+    }
+    setSavingPayment(true);
+    try {
+      await savePaymentSettings(password, {
+        minDeposit: payment.minDeposit,
+        markupPercent: payment.markupPercent,
+        upiEnabled: payment.upiEnabled,
+        cryptoEnabled: payment.cryptoEnabled,
+        upiMethods: payment.upiMethods,
+        cryptoMethods: payment.cryptoMethods,
+      });
+      fireToast("success", "Payment settings saved.");
+      await loadPaymentSettings(password);
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const patchPayment = (patch: Partial<AdminPaymentSettings>) =>
+    setPayment((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const addUpiMethod = () =>
+    patchPayment({
+      upiMethods: [
+        ...(payment?.upiMethods ?? []),
+        { id: `upi-${Date.now()}`, label: "", upiId: "", payeeName: "", instructions: "", isActive: true },
+      ],
+    });
+
+  const addCryptoMethod = () =>
+    patchPayment({
+      cryptoMethods: [
+        ...(payment?.cryptoMethods ?? []),
+        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", isActive: true },
+      ],
+    });
+
+  const patchUpi = (i: number, patch: Partial<AdminUpiMethod>) =>
+    patchPayment({
+      upiMethods: (payment?.upiMethods ?? []).map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
+    });
+
+  const patchCrypto = (i: number, patch: Partial<AdminCryptoMethod>) =>
+    patchPayment({
+      cryptoMethods: (payment?.cryptoMethods ?? []).map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
+    });
+
+  const handleAdjustWallet = async (u: AdminUser) => {
+    const raw = prompt(
+      `Adjust wallet for ${u.email}\nCurrent balance: ₹${u.balance.toFixed(2)}\n\n` +
+      `Enter an amount — positive to add, negative to remove (e.g. 100 or -50):`
+    );
+    if (raw === null) return;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount === 0) {
+      fireToast("danger", "Enter a valid non-zero number.");
+      return;
+    }
+    const note = prompt("Reason (saved in the ledger):") || "Manual adjustment";
+    try {
+      const balance = await adjustUserWallet(password, u.id, amount, note);
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, balance } : x)));
+      fireToast("success", `Balance is now ₹${balance.toFixed(2)}.`);
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Adjustment failed.");
     }
   };
 
@@ -357,17 +509,29 @@ export function AdminPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-5">
-        <div className="grid w-full max-w-md grid-cols-3 gap-1 rounded-lg bg-slate-200/70 p-1">
-          {(["panels", "services", "users"] as const).map((key) => (
+        <div className="grid w-full max-w-xl grid-cols-4 gap-1 rounded-lg bg-slate-200/70 p-1">
+          {(["panels", "services", "payments", "users"] as const).map((key) => (
             <button
               key={key}
               type="button"
-              onClick={() => { setTab(key); if (key === "users" && users.length === 0) loadUsers(); }}
-              className={`rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${
+              onClick={() => {
+                setTab(key);
+                if (key === "users" && users.length === 0) loadUsers();
+                if (key === "payments") {
+                  loadDeposits(password, depositFilter);
+                  if (!payment) loadPaymentSettings(password);
+                }
+              }}
+              className={`relative rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${
                 tab === key ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
               }`}
             >
               {key}
+              {key === "payments" && pendingCount > 0 && (
+                <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">
+                  {pendingCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -610,6 +774,349 @@ export function AdminPage() {
           </Card>
         )}
 
+        {/* ============ PAYMENTS ============ */}
+        {tab === "payments" && (
+          <>
+            {/* ---- Deposit queue ---- */}
+            <Card>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">
+                    Deposit requests
+                    {pendingCount > 0 && (
+                      <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">
+                        {pendingCount} pending
+                      </span>
+                    )}
+                  </h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    Check the money actually reached your account, then approve. Approving
+                    credits the user's wallet immediately.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={depositFilter}
+                    onChange={(e) => {
+                      const next = e.target.value as "pending" | "all";
+                      setDepositFilter(next);
+                      loadDeposits(password, next);
+                    }}
+                    className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="pending">Pending only</option>
+                    <option value="all">All</option>
+                  </select>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={depositsLoading}
+                    onClick={() => loadDeposits(password, depositFilter)}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+
+              {depositsError && <InfoBanner kind="danger">{depositsError}</InfoBanner>}
+
+              {!depositsError && deposits.length === 0 && !depositsLoading && (
+                <p className="py-8 text-center text-sm text-slate-500">
+                  {depositFilter === "pending"
+                    ? "Nothing waiting for approval."
+                    : "No deposits yet."}
+                </p>
+              )}
+
+              <div className="space-y-2">
+                {deposits.map((d) => (
+                  <div
+                    key={d.id}
+                    className={`rounded-lg border p-3 ${
+                      d.status === "pending"
+                        ? "border-amber-300 bg-amber-50/50"
+                        : "border-slate-200"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-lg font-extrabold tabular-nums text-slate-900">
+                            ₹{d.amount.toFixed(2)}
+                          </span>
+                          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                            {d.method}
+                          </span>
+                          <StatusPill
+                            kind={
+                              d.status === "approved"
+                                ? "active"
+                                : d.status === "rejected"
+                                ? "danger"
+                                : "warning"
+                            }
+                          >
+                            {d.status}
+                          </StatusPill>
+                        </div>
+                        <p className="mt-1 text-sm font-medium text-slate-700">{d.userEmail}</p>
+                        <p className="mt-0.5 break-all font-mono text-xs text-slate-500">
+                          {d.method === "upi" ? "UTR: " : "TX: "}{d.reference}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          {d.createdAt ? new Date(d.createdAt).toLocaleString() : "—"}
+                        </p>
+                        {d.adminNote && (
+                          <p className="mt-1 text-[11px] text-rose-600">Note: {d.adminNote}</p>
+                        )}
+                      </div>
+
+                      {d.status === "pending" && (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            loading={reviewingId === d.id}
+                            onClick={() => handleReview(d, "approve")}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={reviewingId === d.id}
+                            onClick={() => handleReview(d, "reject")}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            {/* ---- Pricing ---- */}
+            {payment && (
+              <Card>
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-slate-900">Pricing &amp; limits</h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    Markup is added on top of what your SMM panel charges you.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Markup %
+                    </label>
+                    <input
+                      type="number"
+                      value={payment.markupPercent}
+                      onChange={(e) => patchPayment({ markupPercent: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Panel cost ₹100 → user pays ₹{(100 * (1 + (payment.markupPercent || 0) / 100)).toFixed(2)}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Minimum deposit (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={payment.minDeposit}
+                      onChange={(e) => patchPayment({ minDeposit: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* ---- UPI ---- */}
+            {payment && (
+              <Card>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">UPI</h2>
+                    <p className="mt-0.5 text-sm text-slate-500">
+                      Users see these details and pay you directly.
+                    </p>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={payment.upiEnabled}
+                      onChange={(e) => patchPayment({ upiEnabled: e.target.checked })}
+                      className="h-4 w-4"
+                    />
+                    Enabled
+                  </label>
+                </div>
+
+                <div className="space-y-3">
+                  {payment.upiMethods.map((m, i) => (
+                    <div key={m.id} className="rounded-lg border border-slate-200 p-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Input
+                          label="Label"
+                          value={m.label}
+                          onChange={(e) => patchUpi(i, { label: e.target.value })}
+                          placeholder="Main UPI"
+                        />
+                        <Input
+                          label="UPI ID"
+                          value={m.upiId}
+                          onChange={(e) => patchUpi(i, { upiId: e.target.value })}
+                          placeholder="yourname@okaxis"
+                          className="font-mono"
+                        />
+                        <Input
+                          label="Payee name"
+                          value={m.payeeName}
+                          onChange={(e) => patchUpi(i, { payeeName: e.target.value })}
+                          placeholder="Shown so users can verify"
+                        />
+                        <Input
+                          label="Instructions (optional)"
+                          value={m.instructions}
+                          onChange={(e) => patchUpi(i, { instructions: e.target.value })}
+                          placeholder="e.g. Add your email in the note"
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center gap-3">
+                        <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={m.isActive}
+                            onChange={(e) => patchUpi(i, { isActive: e.target.checked })}
+                          />
+                          Active
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            patchPayment({
+                              upiMethods: payment.upiMethods.filter((_, idx) => idx !== i),
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3">
+                  <Button variant="ghost" size="sm" onClick={addUpiMethod}>
+                    + Add UPI ID
+                  </Button>
+                </div>
+              </Card>
+            )}
+
+            {/* ---- Crypto ---- */}
+            {payment && (
+              <Card>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">Crypto</h2>
+                    <p className="mt-0.5 text-sm text-slate-500">
+                      Users send to these addresses and submit the transaction hash.
+                    </p>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={payment.cryptoEnabled}
+                      onChange={(e) => patchPayment({ cryptoEnabled: e.target.checked })}
+                      className="h-4 w-4"
+                    />
+                    Enabled
+                  </label>
+                </div>
+
+                <div className="space-y-3">
+                  {payment.cryptoMethods.map((m, i) => (
+                    <div key={m.id} className="rounded-lg border border-slate-200 p-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Input
+                          label="Label"
+                          value={m.label}
+                          onChange={(e) => patchCrypto(i, { label: e.target.value })}
+                          placeholder="USDT"
+                        />
+                        <Input
+                          label="Network"
+                          value={m.network}
+                          onChange={(e) => patchCrypto(i, { network: e.target.value })}
+                          placeholder="TRC20"
+                        />
+                        <Input
+                          label="Wallet address"
+                          value={m.address}
+                          onChange={(e) => patchCrypto(i, { address: e.target.value })}
+                          placeholder="T…"
+                          className="font-mono"
+                        />
+                        <Input
+                          label="Instructions (optional)"
+                          value={m.instructions}
+                          onChange={(e) => patchCrypto(i, { instructions: e.target.value })}
+                          placeholder="e.g. TRC20 only"
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center gap-3">
+                        <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={m.isActive}
+                            onChange={(e) => patchCrypto(i, { isActive: e.target.checked })}
+                          />
+                          Active
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            patchPayment({
+                              cryptoMethods: payment.cryptoMethods.filter((_, idx) => idx !== i),
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3">
+                  <Button variant="ghost" size="sm" onClick={addCryptoMethod}>
+                    + Add crypto address
+                  </Button>
+                </div>
+
+                <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
+                  <Button variant="primary" onClick={handleSavePayment} loading={savingPayment}>
+                    Save payment settings
+                  </Button>
+                  {payment.updatedAt && (
+                    <span className="text-xs text-slate-500">
+                      Last saved {new Date(payment.updatedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+
         {/* ============ USERS ============ */}
         {tab === "users" && (
           <Card>
@@ -637,6 +1144,7 @@ export function AdminPage() {
                     <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
                       <th className="py-2 pr-3 font-semibold">Email</th>
                       <th className="py-2 pr-3 font-semibold">Name</th>
+                      <th className="py-2 pr-3 font-semibold">Balance</th>
                       <th className="py-2 pr-3 font-semibold">Orders</th>
                       <th className="py-2 pr-3 font-semibold">Last login</th>
                       <th className="py-2 pr-3 font-semibold">Status</th>
@@ -648,6 +1156,9 @@ export function AdminPage() {
                       <tr key={u.id} className="border-b border-slate-100 last:border-0">
                         <td className="py-2.5 pr-3 font-medium text-slate-900">{u.email}</td>
                         <td className="py-2.5 pr-3 text-slate-600">{u.name || "—"}</td>
+                        <td className="py-2.5 pr-3 font-semibold tabular-nums text-emerald-700">
+                          ₹{u.balance.toFixed(2)}
+                        </td>
                         <td className="py-2.5 pr-3 tabular-nums text-slate-600">{u.orderCount}</td>
                         <td className="py-2.5 pr-3 text-slate-500">
                           {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "—"}
@@ -657,7 +1168,10 @@ export function AdminPage() {
                             {u.isActive ? "Active" : "Disabled"}
                           </StatusPill>
                         </td>
-                        <td className="py-2.5 text-right">
+                        <td className="py-2.5 text-right whitespace-nowrap">
+                          <Button variant="ghost" size="sm" onClick={() => handleAdjustWallet(u)}>
+                            Wallet
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => toggleUser(u)}>
                             {u.isActive ? "Disable" : "Enable"}
                           </Button>
