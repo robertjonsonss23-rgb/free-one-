@@ -6,7 +6,7 @@ import { OrdersPage } from "./pages/OrdersPage";
 import { RatiosPage } from "./pages/RatiosPage";
 import { WalletPage } from "./pages/WalletPage";
 import type {
-  CreatedOrder,
+  CreatedOrder, 
   EngagementRatios, 
   RatioPreset,
   RunStatus,
