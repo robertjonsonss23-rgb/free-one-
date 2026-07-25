@@ -2,8 +2,6 @@ import { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RunTable } from "../components/RunTable";
 import type {
-  ApiPanel,
-  Bundle,
   CreatedOrder,
   DeliveryOption,
   EngagementRatios,
@@ -12,7 +10,7 @@ import type {
   QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
-import { createSmmOrder, fetchPanelPricingMetadata, BACKEND_BASE_URL } from "../utils/api"; 
+import { createSmmOrder, fetchPanelConfig, BACKEND_BASE_URL, type PanelConfig } from "../utils/api"; 
 import { createPatternPlan } from "../utils/patterns";
 import {
   Button,
@@ -22,13 +20,10 @@ import {
 } from "../components/ui";
 
 interface NewOrderPageProps {
-  apis: ApiPanel[];
-  bundles: Bundle[];
   orders: CreatedOrder[];
   prefillOrder?: CreatedOrder | null;
   activeRatios?: EngagementRatios;
   onCreateOrder: (order: CreatedOrder) => void;
-  onPricingMetadataUpdate: (apiId: string, metadata: Partial<ApiPanel>) => void;
   onNavigateToOrders: (notice?: string) => void;
 }
 
@@ -77,13 +72,10 @@ function SectionTitle({
 /* ============================================ */
 
 export function NewOrderPage({
-  apis,
-  bundles,
   orders,
   prefillOrder,
   activeRatios,
   onCreateOrder,
-  onPricingMetadataUpdate,
   onNavigateToOrders,
 }: NewOrderPageProps) {
   const effectiveRatios = activeRatios ?? DEFAULT_ENGAGEMENT_RATIOS;
@@ -92,10 +84,6 @@ export function NewOrderPage({
     (Object.keys(effectiveRatios) as (keyof EngagementRatios)[]).some(
       (k) => effectiveRatios[k] !== DEFAULT_ENGAGEMENT_RATIOS[k]
     );
-  const prefillApiId = prefillOrder ? apis.find((api) => api.name === prefillOrder.selectedAPI)?.id ?? "" : "";
-  const prefillBundleId = prefillOrder
-    ? bundles.find((bundle) => bundle.name === prefillOrder.selectedBundle && bundle.apiId === prefillApiId)?.id ?? ""
-    : "";
   const prefillRuns = prefillOrder?.runs || [];
   const prefillPlan: PatternPlan | null = prefillOrder
     ? {
@@ -136,8 +124,8 @@ export function NewOrderPage({
   const [bulkLinks, setBulkLinks] = useState("");
   const [totalViews, setTotalViews] = useState(prefillOrder?.totalViews ?? 50000);
   const [minViewsPerRun, setMinViewsPerRun] = useState(10);
-  const [selectedApiId, setSelectedApiId] = useState(prefillApiId);
-  const [selectedBundleId, setSelectedBundleId] = useState(prefillBundleId);
+  const [panelConfig, setPanelConfig] = useState<PanelConfig | null>(null);
+  const [panelConfigError, setPanelConfigError] = useState("");
   const [startDelayHours, setStartDelayHours] = useState(prefillOrder?.startDelayHours ?? 0);
   const [includeLikes, setIncludeLikes] = useState((prefillOrder?.engagement.likes ?? 0) > 0);
   const [includeShares, setIncludeShares] = useState((prefillOrder?.engagement.shares ?? 0) > 0);
@@ -156,7 +144,6 @@ export function NewOrderPage({
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-  const [pricingRefreshError, setPricingRefreshError] = useState("");
 
   useEffect(() => {
     const fetchMinViews = async () => {
@@ -175,33 +162,47 @@ export function NewOrderPage({
     fetchMinViews();
   }, []);
 
-  // Refresh conversion rates older than six hours when an API is selected.
+  // Load the admin-managed panel configuration. This tells us which
+  // engagement types the admin has enabled.
   useEffect(() => {
-    const selected = apis.find((api) => api.id === selectedApiId);
-    if (!selected?.currency) return;
-    const updatedAt = selected.exchangeRateUpdatedAt
-      ? new Date(selected.exchangeRateUpdatedAt).getTime()
-      : 0;
-    const stale = !selected.exchangeRateToInr || !updatedAt || Date.now() - updatedAt > 6 * 60 * 60 * 1000;
-    if (!stale) return;
-
     let cancelled = false;
-    setPricingRefreshError("");
-    fetchPanelPricingMetadata(selected.url, selected.key, selected.currency)
-      .then((metadata) => {
-        if (cancelled || !metadata.currency || !metadata.exchangeRateToInr) return;
-        onPricingMetadataUpdate(selected.id, {
-          currency: metadata.currency,
-          currencySource: selected.currencySource || "user",
-          exchangeRateToInr: metadata.exchangeRateToInr,
-          exchangeRateUpdatedAt: metadata.exchangeRateUpdatedAt || new Date().toISOString(),
-        });
+    fetchPanelConfig()
+      .then((cfg) => {
+        if (cancelled) return;
+        setPanelConfig(cfg);
+        setPanelConfigError("");
       })
       .catch((error) => {
-        if (!cancelled) setPricingRefreshError(error instanceof Error ? error.message : "Exchange-rate refresh failed");
+        if (cancelled) return;
+        setPanelConfigError(
+          error instanceof Error ? error.message : "Could not load panel configuration"
+        );
       });
     return () => { cancelled = true; };
-  }, [selectedApiId, apis]);
+  }, []);
+
+  // A service is only orderable if the admin mapped a service id to it.
+  const enabled = useMemo(() => {
+    const ids = panelConfig?.serviceIds;
+    return {
+      views: Boolean(ids?.views),
+      likes: Boolean(ids?.likes),
+      shares: Boolean(ids?.shares),
+      saves: Boolean(ids?.saves),
+      comments: Boolean(ids?.comments),
+      reposts: Boolean(ids?.reposts),
+    };
+  }, [panelConfig]);
+
+  // Never keep a toggle on for something the admin has disabled.
+  useEffect(() => {
+    if (!panelConfig) return;
+    if (!enabled.likes) setIncludeLikes(false);
+    if (!enabled.shares) setIncludeShares(false);
+    if (!enabled.saves) setIncludeSaves(false);
+    if (!enabled.reposts) setIncludeReposts(false);
+    if (!enabled.comments) setIncludeComments(false);
+  }, [panelConfig, enabled]);
 
   const config: OrderConfig = useMemo(
     () => ({
@@ -283,11 +284,6 @@ export function NewOrderPage({
 
   const safePlan = useMemo(() => ({ ...plan, runs: plan?.runs || [] }), [plan]);
 
-  const bundleOptions = useMemo(() => {
-    if (!selectedApiId) return bundles;
-    return bundles.filter((bundle) => String(bundle.apiId || "").trim() === String(selectedApiId || "").trim());
-  }, [bundles, selectedApiId]);
-
   function isValidUrl(value: string) {
     try {
       const parsed = new URL(value);
@@ -348,120 +344,6 @@ export function NewOrderPage({
       { views: 0, likes: 0, shares: 0, comments: 0, saves: 0, reposts: 0 }
     );
   }, [safePlan.runs]);
-
-  const totalCost = useMemo(() => {
-    const selBundle = bundles.find(b => String(b.id || "").trim() === String(selectedBundleId || "").trim());
-    const selApi = apis.find(a => String(a.id || "").trim() === String(selectedApiId || "").trim());
-    if (!selBundle || !selApi || safePlan.runs.length === 0) return null;
-
-    const findSvc = (targetId?: string | number) => {
-      if (targetId === null || targetId === undefined || targetId === "") return undefined;
-      const t = String(targetId).trim();
-      return selApi.services.find(s => {
-        const sid = String(s.id ?? (s as any).service ?? (s as any).services ?? (s as any).service_id ?? (s as any).serviceId ?? "").trim();
-        return sid === t;
-      });
-    };
-
-    const viewsService = findSvc(selBundle.serviceIds.views);
-    const likesService = findSvc(selBundle.serviceIds.likes);
-    const sharesService = findSvc(selBundle.serviceIds.shares);
-    const savesService = findSvc(selBundle.serviceIds.saves);
-    const repostsService = findSvc(selBundle.serviceIds.reposts);
-    const commentsService = findSvc(selBundle.serviceIds.comments);
-
-    // Mirror the exact quantities sent/accepted by order creation and addRuns.
-    const totalViewsQty = safePlan.runs.reduce(
-      (sum, run) => sum + Math.max(Math.floor(run.views || 0), minViewsPerRun), 0
-    );
-    const totalLikesQty = safePlan.runs.reduce(
-      (sum, run) => sum + Math.max(0, Math.floor(run.likes || 0)), 0
-    );
-    const totalSharesQty = safePlan.runs.reduce(
-      (sum, run) => sum + Math.max(0, Math.floor(run.shares || 0)), 0
-    );
-    const totalSavesQty = safePlan.runs.reduce(
-      (sum, run) => sum + Math.max(0, Math.floor(run.saves || 0)), 0
-    );
-    const totalRepostsQty = safePlan.runs.reduce((sum, run) => {
-      const quantity = Math.max(0, Math.floor(run.reposts || 0));
-      return sum + (quantity >= 10 ? quantity : 0);
-    }, 0);
-    const totalCommentsQty = safePlan.runs.reduce((sum, run) => {
-      const requested = Math.max(0, Math.floor(run.comments || 0));
-      return sum + Math.min(requested, 10);
-    }, 0);
-
-    const parseRate = (val: unknown): number => {
-      if (val === null || val === undefined) return 0;
-      if (typeof val === "number") return Number.isFinite(val) ? Math.max(0, val) : 0;
-      const str = String(val).trim();
-      let clean = str.replace(/[^\d.,]/g, "");
-      if (clean.includes(".") && clean.includes(",")) {
-        if (clean.lastIndexOf(",") > clean.lastIndexOf(".")) {
-          clean = clean.replace(/\./g, "").replace(",", ".");
-        } else {
-          clean = clean.replace(/,/g, "");
-        }
-      } else if (clean.includes(",")) {
-        const parts = clean.split(",");
-        if (parts.length > 2) {
-          clean = clean.replace(/,/g, "");
-        } else {
-          const [whole, fraction = ""] = parts;
-          clean = fraction.length === 3 && whole !== "0"
-            ? `${whole}${fraction}`
-            : `${whole}.${fraction}`;
-        }
-      }
-      const parsed = Number(clean);
-      return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
-    };
-
-    const viewsRate = parseRate(viewsService?.rate ?? viewsService?.price ?? viewsService?.cost);
-    const likesRate = parseRate(likesService?.rate ?? likesService?.price ?? likesService?.cost);
-    const sharesRate = parseRate(sharesService?.rate ?? sharesService?.price ?? sharesService?.cost);
-    const savesRate = parseRate(savesService?.rate ?? savesService?.price ?? savesService?.cost);
-    const repostsRate = parseRate(repostsService?.rate ?? repostsService?.price ?? repostsService?.cost);
-    const commentsRate = parseRate(commentsService?.rate ?? commentsService?.price ?? commentsService?.cost);
-
-    // A zero/missing rate for any selected service makes the quote incomplete.
-    if (
-      viewsRate <= 0 ||
-      (includeLikes && likesRate <= 0) ||
-      (includeShares && sharesRate <= 0) ||
-      (includeSaves && savesRate <= 0) ||
-      (includeReposts && repostsRate <= 0) ||
-      (includeComments && commentsRate <= 0)
-    ) return null;
-
-    // Standard SMM API rates are prices per 1,000 units in the panel account's
-    // currency. Currency must be detected or user-confirmed; it is never guessed.
-    const exchangeRate = Number(selApi.exchangeRateToInr);
-    if (!selApi.currency || !Number.isFinite(exchangeRate) || exchangeRate <= 0) return null;
-
-    const viewsNative = (totalViewsQty / 1000) * viewsRate;
-    const likesNative = includeLikes ? (totalLikesQty / 1000) * likesRate : 0;
-    const sharesNative = includeShares ? (totalSharesQty / 1000) * sharesRate : 0;
-    const savesNative = includeSaves ? (totalSavesQty / 1000) * savesRate : 0;
-    const repostsNative = includeReposts ? (totalRepostsQty / 1000) * repostsRate : 0;
-    const commentsNative = includeComments ? (totalCommentsQty / 1000) * commentsRate : 0;
-    const nativeTotal = viewsNative + likesNative + sharesNative + savesNative + repostsNative + commentsNative;
-
-    return {
-      total: nativeTotal * exchangeRate,
-      views: viewsNative * exchangeRate,
-      likes: likesNative * exchangeRate,
-      shares: sharesNative * exchangeRate,
-      saves: savesNative * exchangeRate,
-      reposts: repostsNative * exchangeRate,
-      comments: commentsNative * exchangeRate,
-      nativeTotal,
-      currency: selApi.currency,
-      exchangeRate,
-      exchangeRateUpdatedAt: selApi.exchangeRateUpdatedAt,
-    };
-  }, [selectedBundleId, selectedApiId, bundles, apis, safePlan.runs, minViewsPerRun, customComments, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
 
   const estimatedRunCount = safePlan.runs.length;
   const averageViewsPerRun = estimatedRunCount > 0 ? Math.round(totalViews / estimatedRunCount) : 0;
@@ -621,33 +503,40 @@ export function NewOrderPage({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">API panel</label>
-                <select
-                  value={selectedApiId}
-                  onChange={(e) => { setSelectedApiId(e.target.value); setSelectedBundleId(""); }}
-                  className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 focus:outline-none transition"
-                >
-                  <option value="">Select API…</option>
-                  {apis.map((api) => (
-                    <option key={api.id} value={api.id}>{api.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Bundle</label>
-                <select
-                  value={selectedBundleId}
-                  onChange={(e) => setSelectedBundleId(e.target.value)}
-                  className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 focus:outline-none transition"
-                >
-                  <option value="">Select bundle…</option>
-                  {bundleOptions.map((bundle) => (
-                    <option key={bundle.id} value={bundle.id}>{bundle.name}</option>
-                  ))}
-                </select>
-              </div>
+            {/* Panel is configured by the admin — users just see what's available. */}
+            <div className="rounded-lg border-2 border-slate-200 bg-slate-50 px-3 py-2.5">
+              {panelConfigError ? (
+                <p className="text-xs font-bold text-rose-700">{panelConfigError}</p>
+              ) : !panelConfig ? (
+                <p className="text-xs font-bold text-slate-500">Loading panel…</p>
+              ) : !panelConfig.configured ? (
+                <p className="text-xs font-bold text-amber-700">
+                  No SMM panel configured yet. Ask the administrator to set one up.
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      Panel
+                    </span>
+                    <span className="text-xs font-extrabold text-slate-900">
+                      {panelConfig.panelName || "Configured"}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {(["views", "likes", "shares", "saves", "comments", "reposts"] as const)
+                      .filter((k) => enabled[k])
+                      .map((k) => (
+                        <span
+                          key={k}
+                          className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </Card>
@@ -883,59 +772,43 @@ export function NewOrderPage({
 
           <div className="px-3 sm:px-4 py-3 bg-gradient-to-r from-slate-50 to-indigo-50/30 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1 min-w-0">
-              {totalCost && totalCost.total > 0 ? (
+              {estimatedRunCount > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Estimated</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Scheduled</span>
                   <span className="text-2xl sm:text-3xl font-extrabold text-indigo-700 tabular-nums">
-                    ₹{totalCost.total.toFixed(2)}
+                    {totalViews.toLocaleString()}
                   </span>
+                  <span className="text-xs font-bold text-slate-600">views</span>
                   <div className="flex flex-wrap gap-1">
-                    {totalCost.views > 0 && (
-                      <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        Views ₹{totalCost.views.toFixed(0)}
-                      </span>
-                    )}
-                    {includeLikes && totalCost.likes > 0 && (
+                    {includeLikes && (
                       <span className="inline-flex items-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-                        ❤️ ₹{totalCost.likes.toFixed(0)}
+                        ❤️ {graphTotals.likes.toLocaleString()}
                       </span>
                     )}
-                    {includeShares && totalCost.shares > 0 && (
+                    {includeShares && (
                       <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                        🔁 ₹{totalCost.shares.toFixed(0)}
+                        🔁 {graphTotals.shares.toLocaleString()}
                       </span>
                     )}
-                    {includeSaves && totalCost.saves > 0 && (
+                    {includeSaves && (
                       <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
-                        🔖 ₹{totalCost.saves.toFixed(0)}
+                        🔖 {graphTotals.saves.toLocaleString()}
                       </span>
                     )}
-                    {includeReposts && totalCost.reposts > 0 && (
+                    {includeReposts && (
                       <span className="inline-flex items-center rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
-                        📢 ₹{totalCost.reposts.toFixed(0)}
+                        📢 {graphTotals.reposts.toLocaleString()}
                       </span>
                     )}
-                    {includeComments && totalCost.comments > 0 && (
+                    {includeComments && (
                       <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                        💬 ₹{totalCost.comments.toFixed(0)}
+                        💬 {graphTotals.comments.toLocaleString()}
                       </span>
                     )}
                   </div>
-                  <p className="w-full text-[10px] font-semibold text-slate-500">
-                    {totalCost.nativeTotal.toFixed(4)} {totalCost.currency} converted at 1 {totalCost.currency} = ₹{totalCost.exchangeRate.toFixed(4)}
-                    {totalCost.exchangeRateUpdatedAt
-                      ? ` · rate ${new Date(totalCost.exchangeRateUpdatedAt).toLocaleDateString()}`
-                      : ""}
-                  </p>
                 </div>
-              ) : selectedApiId && selectedBundleId ? (
-                <p className="text-xs font-bold text-amber-700">
-                  {pricingRefreshError
-                    ? `Cost unavailable — ${pricingRefreshError}`
-                    : "Cost unavailable — sync this API, confirm its currency, and verify all selected service rates."}
-                </p>
               ) : (
-                <p className="text-xs font-bold text-slate-500">Select API & bundle to see cost</p>
+                <p className="text-xs font-bold text-slate-500">Configure the schedule to see totals</p>
               )}
             </div>
 
@@ -953,7 +826,10 @@ export function NewOrderPage({
               onClick={async () => {
                 setCreateError("");
                 setCreateSuccess("");
-                if (!selectedBundleId) { setCreateError("Select a bundle before creating a mission."); return; }
+                if (!panelConfig?.configured) {
+                  setCreateError("No SMM panel configured yet. Ask the administrator to set one up.");
+                  return;
+                }
                 const bulkTargets = bulkLinks.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
                 const singleTarget = postUrl.trim();
                 const targets = bulkTargets.length > 0 ? bulkTargets : singleTarget ? [singleTarget] : [];
@@ -961,26 +837,13 @@ export function NewOrderPage({
                 const invalidTarget = targets.find((target) => !isValidUrl(target));
                 if (invalidTarget) { setCreateError(`Invalid URL: ${invalidTarget.slice(0, 30)}...`); return; }
 
-                const selApi = apis.find((api) => api.id === selectedApiId) ?? null;
-                if (!selApi) { setCreateError("Select an API."); return; }
-                if (!selApi.url.trim()) { setCreateError("API URL is required."); return; }
-                if (!isValidUrl(selApi.url.trim())) { setCreateError("API URL must be valid."); return; }
-                if (!selApi.key.trim()) { setCreateError("API key is required."); return; }
-
-                const selBundle = bundles.find((bundle) => bundle.id === selectedBundleId);
-                if (!selBundle) { setCreateError("Select a valid bundle."); return; }
-                const viewsServiceId = selBundle.serviceIds.views.trim();
-                if (!viewsServiceId) { setCreateError("Bundle has no Views service."); return; }
-                const likesServiceId = selBundle.serviceIds.likes.trim();
-                const sharesServiceId = selBundle.serviceIds.shares.trim();
-                const savesServiceId = selBundle.serviceIds.saves.trim();
-                const repostsServiceId = selBundle.serviceIds.reposts?.trim();
-                if (includeLikes && !likesServiceId) { setCreateError("Bundle has no Likes service."); return; }
-                if (includeShares && !sharesServiceId) { setCreateError("Bundle has no Shares service."); return; }
-                if (includeSaves && !savesServiceId) { setCreateError("Bundle has no Saves service."); return; }
-                if (includeReposts && !repostsServiceId) { setCreateError("Bundle has no Reposts service."); return; }
-                const commentsServiceId = selBundle.serviceIds.comments?.trim();
-                if (includeComments && !commentsServiceId) { setCreateError("Bundle has no Comments service."); return; }
+                // Service ids live on the server; we only check the admin enabled them.
+                if (!enabled.views) { setCreateError("The admin has not configured a Views service."); return; }
+                if (includeLikes && !enabled.likes) { setCreateError("Likes are not available on this panel."); return; }
+                if (includeShares && !enabled.shares) { setCreateError("Shares are not available on this panel."); return; }
+                if (includeSaves && !enabled.saves) { setCreateError("Saves are not available on this panel."); return; }
+                if (includeReposts && !enabled.reposts) { setCreateError("Reposts are not available on this panel."); return; }
+                if (includeComments && !enabled.comments) { setCreateError("Comments are not available on this panel."); return; }
 
                 const quantity = (safePlan?.runs || []).reduce((acc, run) => acc + run.views, 0);
                 if (!Number.isFinite(quantity) || quantity <= 0) { setCreateError("Quantity must be > 0."); return; }
@@ -1024,21 +887,22 @@ export function NewOrderPage({
                 });
                 const filteredCommentsRuns = commentsRuns.filter(run => run.comments && run.comments.length > 0);
 
+                // No serviceId / apiKey — the server resolves those from admin config.
                 const servicesPayload: {
-                  views: { serviceId: string; runs: Array<{ time: string; quantity: number }> };
-                  likes?: { serviceId: string; runs: Array<{ time: string; quantity: number }> };
-                  shares?: { serviceId: string; runs: Array<{ time: string; quantity: number }> };
-                  saves?: { serviceId: string; runs: Array<{ time: string; quantity: number }> };
-                  reposts?: { serviceId: string; runs: Array<{ time: string; quantity: number }> };
-                  comments?: { serviceId: string; runs: Array<{ time: string; comments: string }> };
-                } = { views: { serviceId: viewsServiceId, runs: viewRuns } };
+                  views: { runs: Array<{ time: string; quantity: number }> };
+                  likes?: { runs: Array<{ time: string; quantity: number }> };
+                  shares?: { runs: Array<{ time: string; quantity: number }> };
+                  saves?: { runs: Array<{ time: string; quantity: number }> };
+                  reposts?: { runs: Array<{ time: string; quantity: number }> };
+                  comments?: { runs: Array<{ time: string; comments: string }> };
+                } = { views: { runs: viewRuns } };
 
-                if (includeLikes) servicesPayload.likes = { serviceId: likesServiceId, runs: likesRuns };
-                if (includeShares) servicesPayload.shares = { serviceId: sharesServiceId, runs: sharesRuns };
-                if (includeSaves) servicesPayload.saves = { serviceId: savesServiceId, runs: savesRuns };
-                if (includeReposts) servicesPayload.reposts = { serviceId: repostsServiceId!, runs: repostsRuns };
+                if (includeLikes) servicesPayload.likes = { runs: likesRuns };
+                if (includeShares) servicesPayload.shares = { runs: sharesRuns };
+                if (includeSaves) servicesPayload.saves = { runs: savesRuns };
+                if (includeReposts) servicesPayload.reposts = { runs: repostsRuns };
                 if (includeComments && filteredCommentsRuns.length > 0) {
-                  servicesPayload.comments = { serviceId: commentsServiceId!, runs: filteredCommentsRuns };
+                  servicesPayload.comments = { runs: filteredCommentsRuns };
                 }
 
                 setIsCreatingOrder(true);
@@ -1071,8 +935,6 @@ export function NewOrderPage({
                     try {
                       const result = await createSmmOrder({
                         name: orderName.trim() || undefined,
-                        apiUrl: selApi.url,
-                        apiKey: selApi.key,
                         link: trimmedUrl,
                         services: servicesPayload,
                       });
@@ -1092,9 +954,9 @@ export function NewOrderPage({
                         patternName: safePlan.patternName,
                         runs: safePlan?.runs || [],
                         engagement: { likes: totalLikes, shares: totalShares, saves: totalSaves, comments: totalCommentsQty, reposts: totalReposts },
-                        serviceId: viewsServiceId,
-                        selectedAPI: selApi.name,
-                        selectedBundle: selBundle.name,
+                        serviceId: panelConfig?.serviceIds.views ?? "",
+                        selectedAPI: panelConfig?.panelName || "Panel",
+                        selectedBundle: "Admin config",
                         status: result.status === "completed" ? "completed" : "running",
                         completedRuns: typeof result.completedRuns === "number" ? result.completedRuns : 0,
                         runStatuses: (safePlan?.runs || []).map(() => "pending"),
@@ -1121,9 +983,9 @@ export function NewOrderPage({
                         patternName: safePlan.patternName,
                         runs: safePlan?.runs || [],
                         engagement: { likes: totalLikes, shares: totalShares, saves: totalSaves, comments: totalCommentsQty, reposts: totalReposts },
-                        serviceId: viewsServiceId,
-                        selectedAPI: selApi.name,
-                        selectedBundle: selBundle.name,
+                        serviceId: panelConfig?.serviceIds.views ?? "",
+                        selectedAPI: panelConfig?.panelName || "Panel",
+                        selectedBundle: "Admin config",
                         status: "failed",
                         completedRuns: 0,
                         runStatuses: (safePlan?.runs || []).map((_, i) => (i === 0 ? "cancelled" : "pending")),
