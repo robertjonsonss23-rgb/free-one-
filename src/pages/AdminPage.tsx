@@ -13,14 +13,18 @@ import {
   SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
-  saveAdminPanelConfig,
+  addPanel,
+  updatePanel,
+  deletePanel,
+  saveServiceSlots,
   verifyAdminPassword,
   getStoredAdminPassword,
   setStoredAdminPassword,
   clearStoredAdminPassword,
-  type PanelConfig,
   fetchAdminUsers,
   setUserActive,
+  type AdminPanelConfig,
+  type ServiceSlot,
   type ServiceLabel,
   type AdminUser,
 } from "../utils/api";
@@ -34,8 +38,8 @@ const LABEL_META: Record<ServiceLabel, { title: string; hint: string; required?:
   reposts:  { title: "Reposts",  hint: "Optional" },
 };
 
-function emptyIds(): Record<ServiceLabel, string> {
-  return { views: "", likes: "", shares: "", saves: "", comments: "", reposts: "" };
+function emptySlots(): Record<ServiceLabel, ServiceSlot[]> {
+  return { views: [], likes: [], shares: [], saves: [], comments: [], reposts: [] };
 }
 
 export function AdminPage() {
@@ -45,22 +49,29 @@ export function AdminPage() {
   const [authLoading, setAuthLoading] = useState(false);
   const [booting, setBooting] = useState(true);
 
-  const [config, setConfig] = useState<PanelConfig | null>(null);
-  const [panelName, setPanelName] = useState("");
-  const [apiUrl, setApiUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [serviceIds, setServiceIds] = useState<Record<ServiceLabel, string>>(emptyIds());
-
-  const [services, setServices] = useState<ApiService[]>([]);
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [servicesError, setServicesError] = useState("");
-  const [search, setSearch] = useState("");
-  const [pickingFor, setPickingFor] = useState<ServiceLabel | null>(null);
-
+  const [config, setConfig] = useState<AdminPanelConfig | null>(null);
+  const [slots, setSlots] = useState<Record<ServiceLabel, ServiceSlot[]>>(emptySlots());
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
 
-  const [tab, setTab] = useState<"panel" | "users">("panel");
+  const [tab, setTab] = useState<"panels" | "services" | "users">("panels");
+
+  // Add-panel form
+  const [newName, setNewName] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [addingPanel, setAddingPanel] = useState(false);
+
+  // Service catalogue, cached per panel so switching panels is instant.
+  const [catalogues, setCatalogues] = useState<Record<string, ApiService[]>>({});
+  const [loadingPanelId, setLoadingPanelId] = useState<string | null>(null);
+  const [catalogueError, setCatalogueError] = useState("");
+
+  // Service picker modal
+  const [picker, setPicker] = useState<{ label: ServiceLabel; index: number } | null>(null);
+  const [pickerPanelId, setPickerPanelId] = useState("");
+  const [search, setSearch] = useState("");
+
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
@@ -70,20 +81,15 @@ export function AdminPage() {
     setTimeout(() => setToast(null), 5000);
   };
 
-  const applyConfig = useCallback((cfg: PanelConfig) => {
+  const applyConfig = useCallback((cfg: AdminPanelConfig) => {
     setConfig(cfg);
-    setPanelName(cfg.panelName);
-    setApiUrl(cfg.apiUrl);
-    setServiceIds({ ...emptyIds(), ...cfg.serviceIds });
-    setApiKey("");
+    setSlots({ ...emptySlots(), ...cfg.serviceSlots });
   }, []);
 
   const loadConfig = useCallback(async (pw: string) => {
-    const cfg = await fetchAdminPanelConfig(pw);
-    applyConfig(cfg);
+    applyConfig(await fetchAdminPanelConfig(pw));
   }, [applyConfig]);
 
-  // Restore an existing session on mount
   useEffect(() => {
     const saved = getStoredAdminPassword();
     if (!saved) { setBooting(false); return; }
@@ -123,28 +129,116 @@ export function AdminPage() {
     setAuthed(false);
     setPassword("");
     setConfig(null);
-    setServices([]);
   };
 
-  const handleLoadServices = async () => {
-    setServicesLoading(true);
-    setServicesError("");
+  /* ---- Panels ---- */
+  const handleAddPanel = async () => {
+    if (!newName.trim()) { fireToast("danger", "Panel name is required."); return; }
+    if (!newUrl.trim()) { fireToast("danger", "API URL is required."); return; }
+    if (!newKey.trim()) { fireToast("danger", "API key is required."); return; }
+    setAddingPanel(true);
     try {
-      // Pass the typed values so the admin can test before saving.
-      const list = await fetchAdminServices(password, {
-        apiUrl: apiUrl.trim() || undefined,
-        apiKey: apiKey.trim() || undefined,
-      });
-      setServices(list);
-      if (list.length === 0) setServicesError("The panel returned no services.");
+      applyConfig(await addPanel(password, {
+        name: newName.trim(), apiUrl: newUrl.trim(), apiKey: newKey.trim(),
+      }));
+      setNewName(""); setNewUrl(""); setNewKey("");
+      fireToast("success", "Panel added.");
     } catch (e) {
-      setServicesError(e instanceof Error ? e.message : "Could not load services.");
-      setServices([]);
+      fireToast("danger", e instanceof Error ? e.message : "Could not add panel.");
     } finally {
-      setServicesLoading(false);
+      setAddingPanel(false);
     }
   };
 
+  const handleTogglePanel = async (id: string, isActive: boolean) => {
+    try {
+      applyConfig(await updatePanel(password, id, { isActive }));
+      fireToast("success", isActive ? "Panel enabled." : "Panel disabled.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Update failed.");
+    }
+  };
+
+  const handleDeletePanel = async (id: string, name: string) => {
+    if (!confirm(`Delete "${name}"? Any service slots using it will be removed.`)) return;
+    try {
+      applyConfig(await deletePanel(password, id));
+      fireToast("success", "Panel deleted.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Delete failed.");
+    }
+  };
+
+  /* ---- Catalogue ---- */
+  const loadCatalogue = async (panelId: string) => {
+    if (catalogues[panelId]) return;
+    setLoadingPanelId(panelId);
+    setCatalogueError("");
+    try {
+      const list = await fetchAdminServices(password, { panelId });
+      setCatalogues((prev) => ({ ...prev, [panelId]: list }));
+      if (list.length === 0) setCatalogueError("That panel returned no services.");
+    } catch (e) {
+      setCatalogueError(e instanceof Error ? e.message : "Could not load services.");
+    } finally {
+      setLoadingPanelId(null);
+    }
+  };
+
+  /* ---- Slots ---- */
+  const addSlot = (label: ServiceLabel) => {
+    const firstPanel = config?.panels.find((p) => p.isActive)?.id || "";
+    setSlots((prev) => ({
+      ...prev,
+      [label]: [...prev[label], { panelId: firstPanel, serviceId: "" }],
+    }));
+  };
+
+  const removeSlot = (label: ServiceLabel, index: number) => {
+    setSlots((prev) => ({
+      ...prev,
+      [label]: prev[label].filter((_, i) => i !== index),
+    }));
+  };
+
+  const patchSlot = (label: ServiceLabel, index: number, patch: Partial<ServiceSlot>) => {
+    setSlots((prev) => ({
+      ...prev,
+      [label]: prev[label].map((s, i) => (i === index ? { ...s, ...patch } : s)),
+    }));
+  };
+
+  const handleSaveSlots = async () => {
+    if (slots.views.length === 0 || !slots.views.some((s) => s.serviceId.trim())) {
+      fireToast("danger", "At least one Views service is required.");
+      return;
+    }
+    const incomplete = SERVICE_LABELS.some((label) =>
+      slots[label].some((s) => !s.panelId || !s.serviceId.trim())
+    );
+    if (incomplete) {
+      fireToast("danger", "Every slot needs a panel and a service ID.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {} as Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>;
+      for (const label of SERVICE_LABELS) {
+        payload[label] = slots[label].map((s) => ({
+          panelId: s.panelId,
+          serviceId: s.serviceId.trim(),
+        }));
+      }
+      applyConfig(await saveServiceSlots(password, payload));
+      fireToast("success", "Service mapping saved.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* ---- Users ---- */
   const loadUsers = async () => {
     setUsersLoading(true);
     setUsersError("");
@@ -169,44 +263,20 @@ export function AdminPage() {
     }
   };
 
-  const handleSave = async () => {
-    if (!apiUrl.trim()) { fireToast("danger", "Panel API URL is required."); return; }
-    if (!config?.hasApiKey && !apiKey.trim()) {
-      fireToast("danger", "API key is required the first time.");
-      return;
-    }
-    if (!serviceIds.views.trim()) { fireToast("danger", "A Views service id is required."); return; }
-
-    setSaving(true);
-    try {
-      const cfg = await saveAdminPanelConfig(password, {
-        panelName: panelName.trim(),
-        apiUrl: apiUrl.trim(),
-        apiKey: apiKey.trim() || undefined,
-        serviceIds,
-      });
-      applyConfig(cfg);
-      fireToast("success", "Configuration saved. Users can now place orders.");
-    } catch (e) {
-      fireToast("danger", e instanceof Error ? e.message : "Save failed.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const filteredServices = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = q
-      ? services.filter((s) => s.name.toLowerCase().includes(q) || s.id.includes(q))
-      : services;
-    return list.slice(0, 300);
-  }, [services, search]);
-
-  const serviceById = useMemo(() => {
-    const map = new Map<string, ApiService>();
-    services.forEach((s) => map.set(s.id, s));
+  const panelNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    config?.panels.forEach((p) => map.set(p.id, p.name));
     return map;
-  }, [services]);
+  }, [config]);
+
+  const pickerServices = useMemo(() => {
+    const list = catalogues[pickerPanelId] || [];
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? list.filter((s) => s.name.toLowerCase().includes(q) || s.id.includes(q))
+      : list;
+    return filtered.slice(0, 300);
+  }, [catalogues, pickerPanelId, search]);
 
   /* ---------------- LOGIN ---------------- */
   if (booting) {
@@ -262,6 +332,8 @@ export function AdminPage() {
   }
 
   /* ---------------- DASHBOARD ---------------- */
+  const activePanels = config?.panels.filter((p) => p.isActive) || [];
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
@@ -274,38 +346,30 @@ export function AdminPage() {
             </div>
             <div>
               <h1 className="text-base font-bold text-slate-900">Admin</h1>
-              <p className="text-[11px] text-slate-500">Panel &amp; service configuration</p>
+              <p className="text-[11px] text-slate-500">Panels, services &amp; users</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <a href="#" className="text-sm font-medium text-slate-600 hover:text-slate-900">
-              View app
-            </a>
+            <a href="#" className="text-sm font-medium text-slate-600 hover:text-slate-900">View app</a>
             <Button variant="ghost" size="sm" onClick={handleLogout}>Sign out</Button>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-5">
-        <div className="grid w-full max-w-xs grid-cols-2 gap-1 rounded-lg bg-slate-200/70 p-1">
-          <button
-            type="button"
-            onClick={() => setTab("panel")}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
-              tab === "panel" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
-            }`}
-          >
-            Panel
-          </button>
-          <button
-            type="button"
-            onClick={() => { setTab("users"); if (users.length === 0) loadUsers(); }}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
-              tab === "users" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
-            }`}
-          >
-            Users
-          </button>
+        <div className="grid w-full max-w-md grid-cols-3 gap-1 rounded-lg bg-slate-200/70 p-1">
+          {(["panels", "services", "users"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => { setTab(key); if (key === "users" && users.length === 0) loadUsers(); }}
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${
+                tab === key ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+              }`}
+            >
+              {key}
+            </button>
+          ))}
         </div>
 
         {toast && (
@@ -314,169 +378,246 @@ export function AdminPage() {
           </motion.div>
         )}
 
-        {tab === "panel" && (
+        {config && (
+          <InfoBanner kind={config.configured ? "success" : "warning"}>
+            {config.configured
+              ? `Live — ${activePanels.length} panel${activePanels.length === 1 ? "" : "s"} connected, users can place orders.`
+              : "Not ready yet. Add a panel, then map at least one Views service."}
+          </InfoBanner>
+        )}
+
+        {/* ============ PANELS ============ */}
+        {tab === "panels" && (
           <>
-          {config && (
-            <InfoBanner kind={config.configured ? "success" : "warning"}>
-              {config.configured
-                ? `Live — users can place orders against "${config.panelName || config.apiUrl}".`
-                : "Not configured yet. Set the panel URL, API key and at least a Views service id."}
-            </InfoBanner>
-          )}
-
-          {/* ---- Panel credentials ---- */}
-          <Card>
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-slate-900">SMM panel</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
-                These credentials stay on the server. Users never see or send them.
-              </p>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="Panel name"
-                value={panelName}
-                onChange={(e) => setPanelName(e.target.value)}
-                placeholder="My SMM Provider"
-              />
-              <Input
-                label="API URL"
-                value={apiUrl}
-                onChange={(e) => setApiUrl(e.target.value)}
-                placeholder="https://panel.example.com/api/v2"
-              />
-            </div>
-
-            <div className="mt-4">
-              <Input
-                label="API key"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={config?.hasApiKey ? `Saved (${config.apiKeyMask}) — leave blank to keep` : "Paste the panel API key"}
-                hint={config?.hasApiKey
-                  ? "A key is already stored. Type a new one only if you want to replace it."
-                  : "Required the first time."}
-              />
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={handleLoadServices} loading={servicesLoading}>
-                Load services from panel
-              </Button>
-              {services.length > 0 && (
-                <span className="self-center text-xs font-medium text-slate-500">
-                  {services.length} services loaded
-                </span>
-              )}
-            </div>
-
-            {servicesError && (
-              <div className="mt-3">
-                <InfoBanner kind="danger">{servicesError}</InfoBanner>
+            <Card>
+              <div className="mb-4">
+                <h2 className="text-base font-semibold text-slate-900">Connected panels</h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Add as many SMM providers as you like. Credentials stay on the server.
+                </p>
               </div>
-            )}
-          </Card>
 
-          {/* ---- Service ids ---- */}
-          <Card>
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-slate-900">Service IDs</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
-                Map each engagement type to a service on the panel. Leave one blank to
-                disable it — users won't be able to order it.
-              </p>
-            </div>
+              {config && config.panels.length === 0 && (
+                <p className="py-6 text-center text-sm text-slate-500">
+                  No panels yet — add your first one below.
+                </p>
+              )}
 
-            <div className="space-y-3">
-              {SERVICE_LABELS.map((label) => {
-                const meta = LABEL_META[label];
-                const current = serviceIds[label];
-                const match = current ? serviceById.get(current) : undefined;
-                return (
+              <div className="space-y-2">
+                {config?.panels.map((panel) => (
                   <div
-                    key={label}
+                    key={panel.id}
                     className="rounded-lg border border-slate-200 p-3 sm:flex sm:items-center sm:gap-4"
                   >
-                    <div className="sm:w-32">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-900">{meta.title}</span>
-                        {meta.required && (
-                          <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
-                            REQUIRED
-                          </span>
-                        )}
+                        <span className="font-semibold text-slate-900">{panel.name}</span>
+                        <StatusPill kind={panel.isActive ? "active" : "danger"}>
+                          {panel.isActive ? "Active" : "Disabled"}
+                        </StatusPill>
                       </div>
-                      <p className="text-[11px] text-slate-500">{meta.hint}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-slate-500">{panel.apiUrl}</p>
+                      <p className="text-[11px] font-mono text-slate-400">{panel.apiKeyMask}</p>
                     </div>
-
-                    <div className="mt-2 flex-1 sm:mt-0">
-                      <input
-                        value={current}
-                        onChange={(e) =>
-                          setServiceIds((prev) => ({ ...prev, [label]: e.target.value.trim() }))
-                        }
-                        placeholder="Service ID (e.g. 1234)"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
-                      />
-                      {match && (
-                        <p className="mt-1 truncate text-[11px] text-emerald-700">
-                          ✓ {match.name} — rate {match.rate} / min {match.min} / max {match.max}
-                        </p>
-                      )}
-                      {current && !match && services.length > 0 && (
-                        <p className="mt-1 text-[11px] text-amber-600">
-                          Not found in the loaded catalogue — double-check this id.
-                        </p>
-                      )}
-                    </div>
-
                     <div className="mt-2 flex gap-2 sm:mt-0">
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={services.length === 0}
-                        onClick={() => { setPickingFor(label); setSearch(""); }}
+                        onClick={() => handleTogglePanel(panel.id, !panel.isActive)}
                       >
-                        Browse
+                        {panel.isActive ? "Disable" : "Enable"}
                       </Button>
-                      {current && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setServiceIds((prev) => ({ ...prev, [label]: "" }))}
-                        >
-                          Clear
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeletePanel(panel.id, panel.name)}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            </Card>
 
-            <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
-              <Button variant="primary" onClick={handleSave} loading={saving}>
-                Save configuration
-              </Button>
-              {config?.updatedAt && (
-                <span className="text-xs text-slate-500">
-                  Last saved {new Date(config.updatedAt).toLocaleString()}
-                </span>
-              )}
-            </div>
-          </Card>
+            <Card>
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold text-slate-900">Add a panel</h3>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input
+                  label="Panel name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="My SMM Provider"
+                />
+                <Input
+                  label="API URL"
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  placeholder="https://panel.example.com/api/v2"
+                />
+              </div>
+              <div className="mt-4">
+                <Input
+                  label="API key"
+                  type="password"
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  placeholder="Paste the panel API key"
+                />
+              </div>
+              <div className="mt-4">
+                <Button variant="primary" onClick={handleAddPanel} loading={addingPanel}>
+                  Add panel
+                </Button>
+              </div>
+            </Card>
           </>
         )}
 
+        {/* ============ SERVICES ============ */}
+        {tab === "services" && (
+          <Card>
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-slate-900">Service mapping</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Add more than one service to a row and the scheduler will{" "}
+                <strong>rotate through them run by run</strong> — run 1 uses the first,
+                run 2 the second, and so on. Each slot can point at a different panel.
+              </p>
+            </div>
+
+            {activePanels.length === 0 ? (
+              <InfoBanner kind="warning">
+                Add an active panel first, then come back to map services.
+              </InfoBanner>
+            ) : (
+              <>
+                {catalogueError && <InfoBanner kind="danger">{catalogueError}</InfoBanner>}
+
+                <div className="space-y-4">
+                  {SERVICE_LABELS.map((label) => {
+                    const meta = LABEL_META[label];
+                    const rows = slots[label];
+                    return (
+                      <div key={label} className="rounded-lg border border-slate-200 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">{meta.title}</span>
+                            {meta.required && (
+                              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                                REQUIRED
+                              </span>
+                            )}
+                            {rows.length > 1 && (
+                              <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                                ROTATING ×{rows.length}
+                              </span>
+                            )}
+                          </div>
+                          <Button variant="ghost" size="sm" onClick={() => addSlot(label)}>
+                            + Add service
+                          </Button>
+                        </div>
+
+                        {rows.length === 0 && (
+                          <p className="py-2 text-[11px] text-slate-500">
+                            Not offered to users. Click “Add service” to enable it.
+                          </p>
+                        )}
+
+                        <div className="space-y-2">
+                          {rows.map((slot, index) => {
+                            const catalogue = catalogues[slot.panelId] || [];
+                            const match = catalogue.find((s) => s.id === slot.serviceId);
+                            return (
+                              <div
+                                key={index}
+                                className="rounded-md bg-slate-50 p-2 sm:flex sm:items-center sm:gap-2"
+                              >
+                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">
+                                  {index + 1}
+                                </span>
+
+                                <select
+                                  value={slot.panelId}
+                                  onChange={(e) => {
+                                    patchSlot(label, index, { panelId: e.target.value, serviceId: "" });
+                                    loadCatalogue(e.target.value);
+                                  }}
+                                  className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm sm:mt-0 sm:w-44"
+                                >
+                                  <option value="">Choose panel…</option>
+                                  {activePanels.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+
+                                <input
+                                  value={slot.serviceId}
+                                  onChange={(e) => patchSlot(label, index, { serviceId: e.target.value.trim() })}
+                                  placeholder="Service ID"
+                                  className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-sm sm:mt-0 sm:flex-1"
+                                />
+
+                                <div className="mt-2 flex gap-1 sm:mt-0">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={!slot.panelId}
+                                    loading={loadingPanelId === slot.panelId}
+                                    onClick={async () => {
+                                      await loadCatalogue(slot.panelId);
+                                      setPickerPanelId(slot.panelId);
+                                      setPicker({ label, index });
+                                      setSearch("");
+                                    }}
+                                  >
+                                    Browse
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => removeSlot(label, index)}>
+                                    Remove
+                                  </Button>
+                                </div>
+
+                                {match && (
+                                  <p className="mt-1 w-full truncate text-[11px] text-emerald-700 sm:mt-0 sm:basis-full">
+                                    ✓ {match.name} — rate {match.rate}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
+                  <Button variant="primary" onClick={handleSaveSlots} loading={saving}>
+                    Save mapping
+                  </Button>
+                  {config?.updatedAt && (
+                    <span className="text-xs text-slate-500">
+                      Last saved {new Date(config.updatedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+        )}
+
+        {/* ============ USERS ============ */}
         {tab === "users" && (
           <Card>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-slate-900">Registered users</h2>
                 <p className="mt-0.5 text-sm text-slate-500">
-                  Everyone who signed up. Disabling an account signs it out immediately.
+                  Disabling an account signs it out immediately.
                 </p>
               </div>
               <Button variant="secondary" size="sm" onClick={loadUsers} loading={usersLoading}>
@@ -485,7 +626,6 @@ export function AdminPage() {
             </div>
 
             {usersError && <InfoBanner kind="danger">{usersError}</InfoBanner>}
-
             {!usersError && users.length === 0 && !usersLoading && (
               <p className="py-8 text-center text-sm text-slate-500">No accounts yet.</p>
             )}
@@ -533,7 +673,7 @@ export function AdminPage() {
       </main>
 
       {/* ---- Service picker ---- */}
-      {pickingFor && (
+      {picker && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -543,9 +683,12 @@ export function AdminPage() {
             <div className="border-b border-slate-200 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-slate-900">
-                  Choose a service for {LABEL_META[pickingFor].title}
+                  {LABEL_META[picker.label].title} — slot {picker.index + 1}
+                  <span className="ml-2 text-xs font-normal text-slate-500">
+                    {panelNameById.get(pickerPanelId)}
+                  </span>
                 </h3>
-                <Button variant="ghost" size="sm" onClick={() => setPickingFor(null)}>Close</Button>
+                <Button variant="ghost" size="sm" onClick={() => setPicker(null)}>Close</Button>
               </div>
               <input
                 autoFocus
@@ -557,16 +700,16 @@ export function AdminPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-2">
-              {filteredServices.length === 0 ? (
+              {pickerServices.length === 0 ? (
                 <p className="p-6 text-center text-sm text-slate-500">No matching services.</p>
               ) : (
-                filteredServices.map((s) => (
+                pickerServices.map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => {
-                      setServiceIds((prev) => ({ ...prev, [pickingFor]: s.id }));
-                      setPickingFor(null);
+                      patchSlot(picker.label, picker.index, { serviceId: s.id });
+                      setPicker(null);
                     }}
                     className="w-full rounded-lg px-3 py-2.5 text-left hover:bg-indigo-50"
                   >
