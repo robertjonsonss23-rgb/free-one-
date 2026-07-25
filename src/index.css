@@ -762,3 +762,59 @@ html.theme-ready body {
 .dark .border-orange-200\/70 { border-color: rgb(120 84 40 / 0.6) !important; }
 .dark .bg-amber-50\/40 { background-color: rgb(60 46 20 / 0.35) !important; }
 .dark .bg-violet-50\/50 { background-color: rgb(45 32 85 / 0.4) !important; }
+
+/* ============================================ */
+/* LANDING PAGE                                 */
+/* Always dark, regardless of the app theme.    */
+/* The global `h1..h6 { color: var(--text-      */
+/* primary) }` rule above would otherwise paint */
+/* headings near-black on this dark background, */
+/* so scope light text to the landing shell.    */
+/* ============================================ */
+.landing-shell h1,
+.landing-shell h2,
+.landing-shell h3,
+.landing-shell h4,
+.landing-shell h5,
+.landing-shell h6 {
+  color: #ffffff;
+}
+
+/* Gradient headline text must keep a transparent fill so the
+   background gradient shows through. */
+.landing-shell .bg-clip-text {
+  color: transparent;
+}
+/* The landing page and its auth modal are always dark. The global
+   `input { background-color: var(--surface) }` rule above would render
+   them white here, so override within the landing shell and modal. */
+.landing-shell input,
+.landing-shell textarea,
+.landing-shell select,
+.landing-auth input,
+.landing-auth textarea,
+.landing-auth select {
+  background-color: rgb(255 255 255 / 0.05);
+  border-color: rgb(255 255 255 / 0.10);
+  color: #ffffff;
+}
+
+.landing-shell input::placeholder,
+.landing-auth input::placeholder {
+  color: #64748b;
+}
+
+.landing-shell input:focus,
+.landing-auth input:focus {
+  border-color: rgb(96 165 250 / 0.6);
+  background-color: rgb(255 255 255 / 0.10);
+  box-shadow: none;
+  outline: none;
+}
+
+.landing-auth h1,
+.landing-auth h2,
+.landing-auth h3 {
+  color: #ffffff;
+}
+
