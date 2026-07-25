@@ -502,12 +502,41 @@ export const SERVICE_LABELS: ServiceLabel[] = [
   "views", "likes", "shares", "saves", "comments", "reposts",
 ];
 
+/* A single rotating slot: one service on one panel. */
+export interface ServiceSlot {
+  panelId: string;
+  serviceId: string;
+  panelName?: string;
+}
+
+/* Public view used by the New Order page. */
+export interface ServiceAvailability {
+  enabled: boolean;
+  count: number;
+  rotating: boolean;
+  slots: Array<{ serviceId: string; panelId: string; panelName: string }>;
+}
+
 export interface PanelConfig {
-  panelName: string;
+  panels: Array<{ id: string; name: string }>;
+  services: Record<ServiceLabel, ServiceAvailability>;
+  configured: boolean;
+  updatedAt: string | null;
+}
+
+/* Admin view: full panel detail + editable slot lists. */
+export interface AdminPanel {
+  id: string;
+  name: string;
   apiUrl: string;
-  hasApiKey: boolean;
   apiKeyMask: string;
-  serviceIds: Record<ServiceLabel, string>;
+  isActive: boolean;
+  createdAt?: string;
+}
+
+export interface AdminPanelConfig {
+  panels: AdminPanel[];
+  serviceSlots: Record<ServiceLabel, ServiceSlot[]>;
   configured: boolean;
   updatedAt: string | null;
 }
@@ -524,20 +553,74 @@ export function clearStoredAdminPassword() {
   try { sessionStorage.removeItem(ADMIN_PW_STORAGE_KEY); } catch { /* ignore */ }
 }
 
-function emptyServiceIds(): Record<ServiceLabel, string> {
-  return { views: "", likes: "", shares: "", saves: "", comments: "", reposts: "" };
+function emptySlots(): Record<ServiceLabel, ServiceSlot[]> {
+  return { views: [], likes: [], shares: [], saves: [], comments: [], reposts: [] };
+}
+
+function normalizeAvailability(raw: unknown): ServiceAvailability {
+  const o = (raw || {}) as Record<string, unknown>;
+  const slots = Array.isArray(o.slots) ? o.slots : [];
+  return {
+    enabled: Boolean(o.enabled),
+    count: Number(o.count) || 0,
+    rotating: Boolean(o.rotating),
+    slots: slots.map((s) => {
+      const row = s as Record<string, unknown>;
+      return {
+        serviceId: String(row.serviceId ?? ""),
+        panelId: String(row.panelId ?? ""),
+        panelName: String(row.panelName ?? ""),
+      };
+    }),
+  };
 }
 
 function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
-  const ids = emptyServiceIds();
-  const rawIds = (raw.serviceIds || {}) as Record<string, unknown>;
-  for (const label of SERVICE_LABELS) ids[label] = String(rawIds[label] ?? "");
+  const rawServices = (raw.services || {}) as Record<string, unknown>;
+  const services = {} as Record<ServiceLabel, ServiceAvailability>;
+  for (const label of SERVICE_LABELS) {
+    services[label] = normalizeAvailability(rawServices[label]);
+  }
+  const panels = Array.isArray(raw.panels) ? raw.panels : [];
   return {
-    panelName: String(raw.panelName ?? ""),
-    apiUrl: String(raw.apiUrl ?? ""),
-    hasApiKey: Boolean(raw.hasApiKey),
-    apiKeyMask: String(raw.apiKeyMask ?? ""),
-    serviceIds: ids,
+    panels: panels.map((p) => {
+      const row = p as Record<string, unknown>;
+      return { id: String(row.id ?? ""), name: String(row.name ?? "") };
+    }),
+    services,
+    configured: Boolean(raw.configured),
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
+  };
+}
+
+function normalizeAdminConfig(raw: Record<string, unknown>): AdminPanelConfig {
+  const rawSlots = (raw.serviceSlots || {}) as Record<string, unknown>;
+  const serviceSlots = emptySlots();
+  for (const label of SERVICE_LABELS) {
+    const rows = Array.isArray(rawSlots[label]) ? (rawSlots[label] as unknown[]) : [];
+    serviceSlots[label] = rows.map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        panelId: String(row.panelId ?? ""),
+        serviceId: String(row.serviceId ?? ""),
+        panelName: String(row.panelName ?? ""),
+      };
+    });
+  }
+  const panels = Array.isArray(raw.panels) ? raw.panels : [];
+  return {
+    panels: panels.map((p) => {
+      const row = p as Record<string, unknown>;
+      return {
+        id: String(row.id ?? ""),
+        name: String(row.name ?? ""),
+        apiUrl: String(row.apiUrl ?? ""),
+        apiKeyMask: String(row.apiKeyMask ?? ""),
+        isActive: row.isActive !== false,
+        createdAt: typeof row.createdAt === "string" ? row.createdAt : undefined,
+      };
+    }),
+    serviceSlots,
     configured: Boolean(raw.configured),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
   };
@@ -570,39 +653,73 @@ export async function verifyAdminPassword(password: string): Promise<boolean> {
   return true;
 }
 
-export async function fetchAdminPanelConfig(password: string): Promise<PanelConfig> {
+export async function fetchAdminPanelConfig(password: string): Promise<AdminPanelConfig> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panel-config`, {
     headers: { "x-admin-password": password },
   });
-  return normalizeConfig(await parseOrThrow(response));
+  return normalizeAdminConfig(await parseOrThrow(response));
 }
 
-export async function saveAdminPanelConfig(
+/* ---- Panels ---- */
+
+export async function addPanel(
   password: string,
-  payload: {
-    panelName?: string;
-    apiUrl?: string;
-    apiKey?: string;
-    serviceIds?: Partial<Record<ServiceLabel, string>>;
-  }
-): Promise<PanelConfig> {
-  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panel-config`, {
+  panel: { name: string; apiUrl: string; apiKey: string }
+): Promise<AdminPanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panels`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(panel),
   });
-  return normalizeConfig(await parseOrThrow(response));
+  return normalizeAdminConfig(await parseOrThrow(response));
 }
 
-/** Fetch the panel's service catalogue using stored (or supplied) credentials. */
+export async function updatePanel(
+  password: string,
+  panelId: string,
+  changes: { name?: string; apiUrl?: string; apiKey?: string; isActive?: boolean }
+): Promise<AdminPanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panels/${panelId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify(changes),
+  });
+  return normalizeAdminConfig(await parseOrThrow(response));
+}
+
+export async function deletePanel(
+  password: string,
+  panelId: string
+): Promise<AdminPanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panels/${panelId}`, {
+    method: "DELETE",
+    headers: { "x-admin-password": password },
+  });
+  return normalizeAdminConfig(await parseOrThrow(response));
+}
+
+/** Replace the rotating slot list for one or more labels. */
+export async function saveServiceSlots(
+  password: string,
+  serviceSlots: Partial<Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>>
+): Promise<AdminPanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/service-slots`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ serviceSlots }),
+  });
+  return normalizeAdminConfig(await parseOrThrow(response));
+}
+
+/** Fetch a panel's service catalogue (by saved id, or unsaved credentials). */
 export async function fetchAdminServices(
   password: string,
-  overrides?: { apiUrl?: string; apiKey?: string }
+  target: { panelId?: string; apiUrl?: string; apiKey?: string }
 ): Promise<ApiService[]> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/admin/services`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
-    body: JSON.stringify(overrides || {}),
+    body: JSON.stringify(target || {}),
   });
   const payload = await parseOrThrow(response);
   const rows = Array.isArray(payload.services) ? (payload.services as RawService[]) : [];
