@@ -25,6 +25,8 @@ interface NewOrderPageProps {
   activeRatios?: EngagementRatios;
   onCreateOrder: (order: CreatedOrder) => void;
   onNavigateToOrders: (notice?: string) => void;
+  onNavigateToWallet?: () => void;
+  onBalanceChange?: (balance: number) => void;
 }
 
 function createOrderId() {
@@ -77,6 +79,8 @@ export function NewOrderPage({
   activeRatios,
   onCreateOrder,
   onNavigateToOrders,
+  onNavigateToWallet,
+  onBalanceChange,
 }: NewOrderPageProps) {
   const effectiveRatios = activeRatios ?? DEFAULT_ENGAGEMENT_RATIOS;
   const ratiosAreCustom =
@@ -856,12 +860,29 @@ export function NewOrderPage({
                     )}
                   </div>
                   <p className="w-full text-[10px] font-semibold text-slate-500">
-                    {quote.currency !== "INR"
-                      ? `${quote.nativeTotal.toFixed(4)} ${quote.currency} at 1 ${quote.currency} = ₹${quote.exchangeRateToInr.toFixed(4)} · `
-                      : ""}
                     {totalViews.toLocaleString()} views over {estimatedRunCount} runs
                     {quote.partial ? " · some rates unavailable" : ""}
                   </p>
+                  {/* Wallet position for this order */}
+                  <div className="w-full">
+                    {quote.sufficient ? (
+                      <p className="text-[10px] font-bold text-emerald-700">
+                        Wallet ₹{quote.balance.toFixed(2)} → ₹{(quote.balance - quote.total).toFixed(2)} after this order
+                      </p>
+                    ) : (
+                      <p className="text-[10px] font-bold text-rose-700">
+                        Not enough balance — you have ₹{quote.balance.toFixed(2)}, need ₹
+                        {(quote.total - quote.balance).toFixed(2)} more.{" "}
+                        <button
+                          type="button"
+                          onClick={() => onNavigateToWallet?.()}
+                          className="underline"
+                        >
+                          Add money
+                        </button>
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : estimatedRunCount > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -921,6 +942,13 @@ export function NewOrderPage({
                 setCreateSuccess("");
                 if (!panelConfig?.configured) {
                   setCreateError("No SMM panel configured yet. Ask the administrator to set one up.");
+                  return;
+                }
+                if (quote?.available && !quote.sufficient) {
+                  setCreateError(
+                    `Not enough wallet balance. This order costs ₹${quote.total.toFixed(2)} ` +
+                    `but you have ₹${quote.balance.toFixed(2)}. Add money from the Wallet page.`
+                  );
                   return;
                 }
                 const bulkTargets = bulkLinks.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -1058,6 +1086,9 @@ export function NewOrderPage({
                       };
 
                       onCreateOrder(order);
+                      if (typeof result.balance === "number") {
+                        onBalanceChange?.(result.balance);
+                      }
                       createdLinks.add(normalizedTarget);
                       successCount += 1;
                     } catch (error) {
