@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { RunStep } from "../types/order";
 import { StatusPill } from "./ui";
 
@@ -11,8 +11,15 @@ type ExtendedRunStatus =
   | "executing"
   | "timeout";
 
+export type EditableField = "views" | "likes" | "shares" | "saves" | "comments" | "reposts";
+
 interface RunTableProps {
   runs: RunStep[];
+  /** Enables inline editing of per-run quantities (schedule mode only). */
+  editable?: boolean;
+  onEditRun?: (runIndex: number, field: EditableField, value: number) => void;
+  /** Provider minimum for engagement services. */
+  engagementMinimum?: number;
   runStatuses?: Array<"pending" | "completed" | "cancelled" | "failed" | "retrying">;
   runErrors?: string[];
   runRetries?: number[];
@@ -33,6 +40,78 @@ const STATUS_KIND: Record<ExtendedRunStatus, any> = {
   timeout: "warning",
 };
 
+
+/**
+ * Click-to-edit number cell.
+ *
+ * Engagement values are constrained to 0 or >= the provider minimum, because
+ * the SMM services reject quantities of 1..9. Anything in that range is
+ * snapped: below half the minimum clears the cell, otherwise it lifts to the
+ * minimum. Views only have to stay >= 0.
+ */
+function EditableCell({
+  value,
+  onCommit,
+  minimum,
+  allowZero = true,
+  className = "",
+}: {
+  value: number;
+  onCommit: (next: number) => void;
+  minimum: number;
+  allowZero?: boolean;
+  className?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  const start = () => {
+    setDraft(String(value));
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    const parsed = Math.floor(Number(draft));
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+
+    let next = parsed;
+    if (minimum > 0 && next > 0 && next < minimum) {
+      next = allowZero && next <= minimum / 2 ? 0 : minimum;
+    }
+    if (next !== value) onCommit(next);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={start}
+        title="Click to edit"
+        className={`w-full rounded px-1.5 py-0.5 text-left tabular-nums transition hover:bg-indigo-50 hover:ring-1 hover:ring-indigo-300 ${className}`}
+      >
+        {value.toLocaleString()}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      type="number"
+      min={0}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); commit(); }
+        if (e.key === "Escape") { setDraft(String(value)); setEditing(false); }
+      }}
+      className="w-16 rounded border border-indigo-400 bg-white px-1 py-0.5 text-xs tabular-nums outline-none ring-2 ring-indigo-100"
+    />
+  );
+}
+
 export function RunTable({
   runs,
   runStatuses = [],
@@ -43,6 +122,9 @@ export function RunTable({
   runReasons = [],
   runActualExecutedTimes = [],
   mode = "logs",
+  editable = false,
+  onEditRun,
+  engagementMinimum = 10,
 }: RunTableProps) {
   const safeRuns = runs || [];
   const safeRunStatuses = runStatuses || [];
@@ -140,20 +222,36 @@ export function RunTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {safeRuns.map((run) => (
-              <tr key={run.run} className="hover:bg-slate-50">
-                <td className="px-3 py-2 text-indigo-600 font-medium tabular-nums">#{run.run}</td>
-                <td className="px-3 py-2 text-slate-700">
-                  {run.at.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                </td>
-                <td className="px-3 py-2 text-slate-900 font-semibold tabular-nums">{(run.views || 0).toLocaleString()}</td>
-                <td className="px-3 py-2 text-slate-700 tabular-nums">{run.likes || 0}</td>
-                <td className="px-3 py-2 text-slate-700 tabular-nums">{run.shares || 0}</td>
-                <td className="px-3 py-2 text-slate-700 tabular-nums">{run.saves || 0}</td>
-                <td className="px-3 py-2 text-slate-700 tabular-nums">{run.comments || 0}</td>
-                <td className="px-3 py-2 text-slate-700 tabular-nums">{run.reposts || 0}</td>
-              </tr>
-            ))}
+            {safeRuns.map((run, index) => {
+              const cell = (field: EditableField, css: string) => {
+                const raw = (run as unknown as Record<string, number>)[field] || 0;
+                if (!editable || !onEditRun) {
+                  return <span className={`tabular-nums ${css}`}>{raw.toLocaleString()}</span>;
+                }
+                return (
+                  <EditableCell
+                    value={raw}
+                    minimum={field === "views" ? 0 : engagementMinimum}
+                    onCommit={(next) => onEditRun(index, field, next)}
+                    className={css}
+                  />
+                );
+              };
+              return (
+                <tr key={run.run} className="hover:bg-slate-50">
+                  <td className="px-3 py-2 text-indigo-600 font-medium tabular-nums">#{run.run}</td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {run.at.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </td>
+                  <td className="px-2 py-1.5">{cell("views", "text-slate-900 font-semibold")}</td>
+                  <td className="px-2 py-1.5">{cell("likes", "text-slate-700")}</td>
+                  <td className="px-2 py-1.5">{cell("shares", "text-slate-700")}</td>
+                  <td className="px-2 py-1.5">{cell("saves", "text-slate-700")}</td>
+                  <td className="px-2 py-1.5">{cell("comments", "text-slate-700")}</td>
+                  <td className="px-2 py-1.5">{cell("reposts", "text-slate-700")}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
