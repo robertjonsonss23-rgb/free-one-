@@ -9,7 +9,9 @@ import {
   StatusPill,
 } from "../components/ui";
 import type { ApiService } from "../types/order";
-import { 
+import { ThemeToggle } from "../components/ThemeToggle";
+import type { Theme } from "../utils/theme";
+import {
   SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
@@ -51,7 +53,12 @@ function emptySlots(): Record<ServiceLabel, ServiceSlot[]> {
   return { views: [], likes: [], shares: [], saves: [], comments: [], reposts: [] };
 }
 
-export function AdminPage() {
+interface AdminPageProps {
+  theme: Theme;
+  onToggleTheme: () => void;
+}
+
+export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [password, setPassword] = useState("");
   const [authed, setAuthed] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -347,7 +354,7 @@ export function AdminPage() {
     patchPayment({
       upiMethods: [
         ...(payment?.upiMethods ?? []),
-        { id: `upi-${Date.now()}`, label: "", upiId: "", payeeName: "", instructions: "", isActive: true },
+        { id: `upi-${Date.now()}`, label: "", upiId: "", payeeName: "", instructions: "", qrImage: "", isActive: true },
       ],
     });
 
@@ -355,9 +362,61 @@ export function AdminPage() {
     patchPayment({
       cryptoMethods: [
         ...(payment?.cryptoMethods ?? []),
-        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", isActive: true },
+        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", qrImage: "", isActive: true },
       ],
     });
+
+  /* Read a chosen file, downscale it to a sane QR size, and return a
+     compact data URL. Doing this client-side keeps the stored document
+     small regardless of what the admin uploads. */
+  const readQrFile = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      if (!file.type.startsWith("image/")) {
+        reject(new Error("Choose an image file (PNG or JPG)."));
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        reject(new Error("That image is over 8 MB. Pick a smaller one."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read that file."));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("That file isn't a valid image."));
+        img.onload = () => {
+          const MAX = 512;                       // plenty for a scannable QR
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale);
+          const h = Math.round(img.height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { reject(new Error("Could not process the image.")); return; }
+          // White backing: transparent PNGs would vanish on dark backgrounds.
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+
+  const handleQrUpload = async (
+    file: File | undefined,
+    apply: (dataUrl: string) => void
+  ) => {
+    if (!file) return;
+    try {
+      apply(await readQrFile(file));
+      fireToast("success", "QR added. Remember to save.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Upload failed.");
+    }
+  };
 
   const patchUpi = (i: number, patch: Partial<AdminUpiMethod>) =>
     patchPayment({
@@ -475,9 +534,12 @@ export function AdminPage() {
             </form>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
-            <a href="#" className="hover:text-slate-600">← Back to the app</a>
-          </p>
+          <div className="mt-6 flex flex-col items-center gap-3">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
+            <p className="text-center text-xs text-slate-400">
+              <a href="#" className="hover:text-slate-600">← Back to the app</a>
+            </p>
+          </div>
         </motion.div>
       </div>
     );
@@ -502,6 +564,7 @@ export function AdminPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
             <a href="#" className="text-sm font-medium text-slate-600 hover:text-slate-900">View app</a>
             <Button variant="ghost" size="sm" onClick={handleLogout}>Sign out</Button>
           </div>
@@ -987,6 +1050,51 @@ export function AdminPage() {
                           placeholder="e.g. Add your email in the note"
                         />
                       </div>
+                      {/* QR code */}
+                      <div className="mt-3 flex flex-wrap items-start gap-3 border-t border-slate-200 pt-3">
+                        {m.qrImage ? (
+                          <img
+                            src={m.qrImage}
+                            alt="QR code"
+                            className="h-24 w-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
+                          />
+                        ) : (
+                          <div className="flex h-24 w-24 items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-[10px] text-slate-400">
+                            No QR
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold text-slate-700">QR code</p>
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            Upload a screenshot of your payment QR. Users can scan it directly.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                              {m.qrImage ? "Replace" : "Upload QR"}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                className="hidden"
+                                onChange={(e) => {
+                                  handleQrUpload(e.target.files?.[0], (url) =>
+                                    patchUpi(i, { qrImage: url })
+                                  );
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {m.qrImage && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => patchUpi(i, { qrImage: "" })}
+                              >
+                                Remove QR
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                       <div className="mt-2 flex items-center gap-3">
                         <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
                           <input
@@ -1070,6 +1178,51 @@ export function AdminPage() {
                           onChange={(e) => patchCrypto(i, { instructions: e.target.value })}
                           placeholder="e.g. TRC20 only"
                         />
+                      </div>
+                      {/* QR code */}
+                      <div className="mt-3 flex flex-wrap items-start gap-3 border-t border-slate-200 pt-3">
+                        {m.qrImage ? (
+                          <img
+                            src={m.qrImage}
+                            alt="QR code"
+                            className="h-24 w-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
+                          />
+                        ) : (
+                          <div className="flex h-24 w-24 items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-[10px] text-slate-400">
+                            No QR
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold text-slate-700">QR code</p>
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            Upload a screenshot of your payment QR. Users can scan it directly.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                              {m.qrImage ? "Replace" : "Upload QR"}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                className="hidden"
+                                onChange={(e) => {
+                                  handleQrUpload(e.target.files?.[0], (url) =>
+                                    patchCrypto(i, { qrImage: url })
+                                  );
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {m.qrImage && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => patchCrypto(i, { qrImage: "" })}
+                              >
+                                Remove QR
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                       <div className="mt-2 flex items-center gap-3">
                         <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
