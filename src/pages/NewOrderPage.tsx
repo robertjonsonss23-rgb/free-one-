@@ -183,16 +183,16 @@ export function NewOrderPage({
     return () => { cancelled = true; };
   }, []);
 
-  // A service is only orderable if the admin mapped a service id to it.
+  // A service is only orderable if the admin mapped at least one slot to it.
   const enabled = useMemo(() => {
-    const ids = panelConfig?.serviceIds;
+    const svc = panelConfig?.services;
     return {
-      views: Boolean(ids?.views),
-      likes: Boolean(ids?.likes),
-      shares: Boolean(ids?.shares),
-      saves: Boolean(ids?.saves),
-      comments: Boolean(ids?.comments),
-      reposts: Boolean(ids?.reposts),
+      views: Boolean(svc?.views?.enabled),
+      likes: Boolean(svc?.likes?.enabled),
+      shares: Boolean(svc?.shares?.enabled),
+      saves: Boolean(svc?.saves?.enabled),
+      comments: Boolean(svc?.comments?.enabled),
+      reposts: Boolean(svc?.reposts?.enabled),
     };
   }, [panelConfig]);
 
@@ -547,23 +547,36 @@ export function NewOrderPage({
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                      Panel
+                      {panelConfig.panels.length > 1 ? "Panels" : "Panel"}
                     </span>
-                    <span className="text-xs font-extrabold text-slate-900">
-                      {panelConfig.panelName || "Configured"}
+                    <span className="truncate text-xs font-extrabold text-slate-900">
+                      {panelConfig.panels.map((p) => p.name).join(" · ") || "Configured"}
                     </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {(["views", "likes", "shares", "saves", "comments", "reposts"] as const)
                       .filter((k) => enabled[k])
-                      .map((k) => (
-                        <span
-                          key={k}
-                          className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
-                        >
-                          {k}
-                        </span>
-                      ))}
+                      .map((k) => {
+                        const info = panelConfig.services[k];
+                        return (
+                          <span
+                            key={k}
+                            title={
+                              info.rotating
+                                ? `Rotates across ${info.count} services: ${info.slots
+                                    .map((s) => `${s.serviceId} (${s.panelName})`)
+                                    .join(", ")}`
+                                : `Service ${info.slots[0]?.serviceId} on ${info.slots[0]?.panelName}`
+                            }
+                            className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
+                          >
+                            {k}
+                            {info.rotating && (
+                              <span className="ml-1 text-indigo-700">×{info.count}</span>
+                            )}
+                          </span>
+                        );
+                      })}
                   </div>
                 </>
               )}
@@ -1034,8 +1047,8 @@ export function NewOrderPage({
                         patternName: safePlan.patternName,
                         runs: safePlan?.runs || [],
                         engagement: { likes: totalLikes, shares: totalShares, saves: totalSaves, comments: totalCommentsQty, reposts: totalReposts },
-                        serviceId: panelConfig?.serviceIds.views ?? "",
-                        selectedAPI: panelConfig?.panelName || "Panel",
+                        serviceId: panelConfig?.services.views.slots[0]?.serviceId ?? "",
+                        selectedAPI: panelConfig?.panels.map((p) => p.name).join(" · ") || "Panel",
                         selectedBundle: "Admin config",
                         status: result.status === "completed" ? "completed" : "running",
                         completedRuns: typeof result.completedRuns === "number" ? result.completedRuns : 0,
@@ -1063,8 +1076,8 @@ export function NewOrderPage({
                         patternName: safePlan.patternName,
                         runs: safePlan?.runs || [],
                         engagement: { likes: totalLikes, shares: totalShares, saves: totalSaves, comments: totalCommentsQty, reposts: totalReposts },
-                        serviceId: panelConfig?.serviceIds.views ?? "",
-                        selectedAPI: panelConfig?.panelName || "Panel",
+                        serviceId: panelConfig?.services.views.slots[0]?.serviceId ?? "",
+                        selectedAPI: panelConfig?.panels.map((p) => p.name).join(" · ") || "Panel",
                         selectedBundle: "Admin config",
                         status: "failed",
                         completedRuns: 0,
