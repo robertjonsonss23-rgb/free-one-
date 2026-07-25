@@ -17,7 +17,6 @@ import type {
 import { DEFAULT_ENGAGEMENT_RATIOS } from "./types/order";
 import { fetchServices, fetchPanelPricingMetadata, updateOrderControl, fetchOrderStatus } from "./utils/api";
 import { cn } from "./utils/cn";
-import { Button } from "./components/ui";
 
 type NavKey =
   | "dashboard"
@@ -792,19 +791,6 @@ export default function App() {
               <p className="text-[11px] font-medium text-slate-600">Auto-sync</p>
               <p className="text-[11px] text-slate-500">Every 5 minutes</p>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              fullWidth
-              onClick={() => {
-                if (window.confirm("Sign out of TRUESMM?")) {
-                  localStorage.removeItem("truesmm-access-key");
-                  window.location.reload();
-                }
-              }}
-            >
-              Sign out
-            </Button>
           </div>
         </aside>
 
