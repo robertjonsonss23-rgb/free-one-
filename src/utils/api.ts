@@ -1074,6 +1074,7 @@ export interface UpiMethod {
   upiId: string;
   payeeName: string;
   instructions: string;
+  qrImage: string;
 }
 
 export interface CryptoMethod {
@@ -1082,6 +1083,7 @@ export interface CryptoMethod {
   network: string;
   address: string;
   instructions: string;
+  qrImage: string;
 }
 
 export interface PaymentMethods {
@@ -1140,6 +1142,7 @@ export async function fetchPaymentMethods(): Promise<PaymentMethods> {
         upiId: String(o.upiId ?? ""),
         payeeName: String(o.payeeName ?? ""),
         instructions: String(o.instructions ?? ""),
+        qrImage: String(o.qrImage ?? ""),
       };
     }),
     cryptoMethods: (Array.isArray(payload.cryptoMethods) ? payload.cryptoMethods : []).map((m) => {
@@ -1150,6 +1153,7 @@ export async function fetchPaymentMethods(): Promise<PaymentMethods> {
         network: String(o.network ?? ""),
         address: String(o.address ?? ""),
         instructions: String(o.instructions ?? ""),
+        qrImage: String(o.qrImage ?? ""),
       };
     }),
   };
@@ -1193,6 +1197,7 @@ export interface AdminUpiMethod {
   upiId: string;
   payeeName: string;
   instructions: string;
+  qrImage: string;
   isActive: boolean;
 }
 
@@ -1202,6 +1207,7 @@ export interface AdminCryptoMethod {
   network: string;
   address: string;
   instructions: string;
+  qrImage: string;
   isActive: boolean;
 }
 
@@ -1302,6 +1308,7 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         upiId: String(o.upiId ?? ""),
         payeeName: String(o.payeeName ?? ""),
         instructions: String(o.instructions ?? ""),
+        qrImage: String(o.qrImage ?? ""),
         isActive: o.isActive !== false,
       };
     }),
@@ -1313,6 +1320,7 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         network: String(o.network ?? ""),
         address: String(o.address ?? ""),
         instructions: String(o.instructions ?? ""),
+        qrImage: String(o.qrImage ?? ""),
         isActive: o.isActive !== false,
       };
     }),
