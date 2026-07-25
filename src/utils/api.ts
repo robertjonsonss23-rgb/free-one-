@@ -552,3 +552,137 @@ export async function checkProviderOrderStatus(schedulerOrderId: string): Promis
     throw error;
   }
 }
+
+/* ============================================================
+   ADMIN-MANAGED PANEL CONFIG
+   The SMM panel URL, API key and per-service ids are stored on the
+   server and set by the admin. Regular users never send credentials.
+   ============================================================ */
+
+export type ServiceLabel =
+  | "views" | "likes" | "shares" | "saves" | "comments" | "reposts";
+
+export const SERVICE_LABELS: ServiceLabel[] = [
+  "views", "likes", "shares", "saves", "comments", "reposts",
+];
+
+export interface PanelConfig {
+  panelName: string;
+  apiUrl: string;
+  hasApiKey: boolean;
+  apiKeyMask: string;
+  serviceIds: Record<ServiceLabel, string>;
+  configured: boolean;
+  updatedAt: string | null;
+}
+
+const ADMIN_PW_STORAGE_KEY = "truesmm-admin-pw";
+
+export function getStoredAdminPassword(): string {
+  try { return sessionStorage.getItem(ADMIN_PW_STORAGE_KEY) || ""; } catch { return ""; }
+}
+export function setStoredAdminPassword(pw: string) {
+  try { sessionStorage.setItem(ADMIN_PW_STORAGE_KEY, pw); } catch { /* ignore */ }
+}
+export function clearStoredAdminPassword() {
+  try { sessionStorage.removeItem(ADMIN_PW_STORAGE_KEY); } catch { /* ignore */ }
+}
+
+function emptyServiceIds(): Record<ServiceLabel, string> {
+  return { views: "", likes: "", shares: "", saves: "", comments: "", reposts: "" };
+}
+
+function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
+  const ids = emptyServiceIds();
+  const rawIds = (raw.serviceIds || {}) as Record<string, unknown>;
+  for (const label of SERVICE_LABELS) ids[label] = String(rawIds[label] ?? "");
+  return {
+    panelName: String(raw.panelName ?? ""),
+    apiUrl: String(raw.apiUrl ?? ""),
+    hasApiKey: Boolean(raw.hasApiKey),
+    apiKeyMask: String(raw.apiKeyMask ?? ""),
+    serviceIds: ids,
+    configured: Boolean(raw.configured),
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
+  };
+}
+
+async function parseOrThrow(response: Response) {
+  const text = await response.text();
+  let payload: Record<string, unknown> = {};
+  try { payload = JSON.parse(text) as Record<string, unknown>; } catch { /* below */ }
+  if (!response.ok) {
+    throw new Error(String(payload.error || `Request failed (HTTP ${response.status})`));
+  }
+  return payload;
+}
+
+/** Public — used by the New Order page. Never contains the API key. */
+export async function fetchPanelConfig(): Promise<PanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/panel-config`);
+  return normalizeConfig(await parseOrThrow(response));
+}
+
+/** Check an admin password against the server. */
+export async function verifyAdminPassword(password: string): Promise<boolean> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+  });
+  if (response.status === 401) return false;
+  await parseOrThrow(response);
+  return true;
+}
+
+export async function fetchAdminPanelConfig(password: string): Promise<PanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panel-config`, {
+    headers: { "x-admin-password": password },
+  });
+  return normalizeConfig(await parseOrThrow(response));
+}
+
+export async function saveAdminPanelConfig(
+  password: string,
+  payload: {
+    panelName?: string;
+    apiUrl?: string;
+    apiKey?: string;
+    serviceIds?: Partial<Record<ServiceLabel, string>>;
+  }
+): Promise<PanelConfig> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panel-config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify(payload),
+  });
+  return normalizeConfig(await parseOrThrow(response));
+}
+
+/** Fetch the panel's service catalogue using stored (or supplied) credentials. */
+export async function fetchAdminServices(
+  password: string,
+  overrides?: { apiUrl?: string; apiKey?: string }
+): Promise<ApiService[]> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/services`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify(overrides || {}),
+  });
+  const payload = await parseOrThrow(response);
+  const rows = Array.isArray(payload.services) ? (payload.services as RawService[]) : [];
+  return rows
+    .map((service) => {
+      const id = String(service.service ?? service.id ?? "").trim();
+      const name = String(service.name ?? "").trim();
+      if (!id || !name) return null;
+      return {
+        id,
+        name,
+        type: String(service.type ?? "").trim(),
+        rate: cleanRateString(service.rate),
+        min: toNumber(service.min),
+        max: toNumber(service.max),
+      } satisfies ApiService;
+    })
+    .filter((s): s is ApiService => Boolean(s));
+}
