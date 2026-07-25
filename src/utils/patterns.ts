@@ -1347,6 +1347,139 @@ function getActiveIndexes(values: number[]): number[] {
  *    the budget allows are used, spread evenly over the timeline rather
  *    than bunched at one end.
  */
+/**
+ * Engagement band for a run, based on how many views it delivers.
+ *
+ * The provider's minimum order is 10, so any run that receives engagement at
+ * all must get at least that. The bands keep each run's numbers plausible
+ * relative to its own view count instead of scaling without limit.
+ */
+function engagementBandForViews(views: number): { min: number; max: number } | null {
+  const v = Math.max(0, Math.floor(views));
+  if (v < 100) return null;              // too small to carry a 10-minimum order
+  if (v <= 500) return { min: 10, max: 15 };
+  if (v <= 1000) return { min: 15, max: 25 };
+  // Beyond the specified bands, continue the same ~2.5% shape so large runs
+  // stay proportional rather than jumping.
+  const scaled = Math.round(v * 0.025);
+  return { min: Math.max(25, Math.round(scaled * 0.8)), max: Math.max(30, Math.round(scaled * 1.25)) };
+}
+
+/**
+ * Assign per-run engagement using the view bands above.
+ *
+ * `targetTotal` steers how many runs participate and where in each band the
+ * values sit, but a run's own view count always decides its ceiling — so a
+ * 300-view run never receives 90 likes.
+ */
+function distributeWithinViewBands(
+  runs: { views: number }[],
+  targetTotal: number,
+  minPerRun = 10
+): number[] {
+  const count = runs.length;
+  const result = Array.from({ length: count }, () => 0);
+  const total = Math.floor(targetTotal);
+  if (count === 0 || total <= 0) return result;
+
+  // Runs big enough to carry an order at all.
+  const eligible: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (engagementBandForViews(runs[i].views || 0)) eligible.push(i);
+  }
+  if (eligible.length === 0) {
+    // Every run is tiny; put the whole budget on the largest one.
+    let best = 0;
+    runs.forEach((run, i) => { if ((run.views || 0) > (runs[best].views || 0)) best = i; });
+    result[best] = Math.max(total, minPerRun);
+    return result;
+  }
+
+  // Spend the budget from the band floors upward. If it can't cover every
+  // eligible run at its minimum, use an evenly spaced subset.
+  const floors = eligible.map((i) => engagementBandForViews(runs[i].views)!.min);
+  const floorSum = floors.reduce((sum, v) => sum + v, 0);
+
+  let chosen = eligible;
+  if (floorSum > total) {
+    /* Not enough budget for every eligible run at its band floor. Work out
+       how many runs we can actually afford using the *average* floor (which
+       may be 15 or 25, not the global 10) — sizing by the global minimum
+       would overshoot the target badly. */
+    const averageFloor = floorSum / eligible.length;
+    const affordable = Math.max(1, Math.floor(total / Math.max(1, averageFloor)));
+    const wanted = Math.min(eligible.length, affordable);
+    const stride = eligible.length / wanted;
+    const picked: number[] = [];
+    for (let i = 0; i < wanted; i += 1) {
+      const idx = eligible[Math.min(eligible.length - 1, Math.round(i * stride + stride / 2))];
+      if (!picked.includes(idx)) picked.push(idx);
+    }
+    chosen = picked.sort((a, b) => a - b);
+
+    /* Trim further if the chosen floors still exceed the budget — this can
+       happen when the picked runs skew towards higher bands. */
+    let chosenFloor = chosen.reduce(
+      (sum, i) => sum + engagementBandForViews(runs[i].views)!.min, 0
+    );
+    while (chosenFloor > total && chosen.length > 1) {
+      // Drop the run whose floor costs most relative to its views.
+      let dropAt = 0;
+      let worstRatio = -1;
+      chosen.forEach((runIdx, k) => {
+        const floor = engagementBandForViews(runs[runIdx].views)!.min;
+        const ratio = floor / Math.max(1, runs[runIdx].views || 1);
+        if (ratio > worstRatio) { worstRatio = ratio; dropAt = k; }
+      });
+      chosenFloor -= engagementBandForViews(runs[chosen[dropAt]].views)!.min;
+      chosen = chosen.filter((_, k) => k !== dropAt);
+    }
+  }
+
+  // Start everyone at their band minimum.
+  const values = chosen.map((i) => engagementBandForViews(runs[i].views)!.min);
+  let remaining = total - values.reduce((sum, v) => sum + v, 0);
+
+  // Distribute any surplus by views, but never past each run's band maximum.
+  if (remaining > 0) {
+    const headroom = chosen.map((i, k) => {
+      const band = engagementBandForViews(runs[i].views)!;
+      return band.max - values[k];
+    });
+    const weights = chosen.map((i) => Math.max(0, runs[i].views || 0));
+    const weightSum = weights.reduce((sum, v) => sum + v, 0);
+
+    if (weightSum > 0) {
+      const exact = weights.map((w) => (w / weightSum) * remaining);
+      for (let k = 0; k < values.length; k += 1) {
+        const give = Math.min(headroom[k], Math.floor(exact[k]));
+        values[k] += give;
+        remaining -= give;
+      }
+    }
+    // Hand out whatever is left, one at a time, to runs with headroom.
+    let guard = 0;
+    while (remaining > 0 && guard < values.length * 40) {
+      const k = guard % values.length;
+      const band = engagementBandForViews(runs[chosen[k]].views)!;
+      if (values[k] < band.max) { values[k] += 1; remaining -= 1; }
+      guard += 1;
+    }
+  } else if (remaining < 0) {
+    // Over budget: trim from the smallest runs first, never below the floor.
+    let guard = 0;
+    while (remaining < 0 && guard < values.length * 40) {
+      const k = guard % values.length;
+      const band = engagementBandForViews(runs[chosen[k]].views)!;
+      if (values[k] > band.min) { values[k] -= 1; remaining += 1; }
+      guard += 1;
+    }
+  }
+
+  chosen.forEach((runIdx, k) => { result[runIdx] = values[k]; });
+  return result;
+}
+
 function distributeProportionalToViews(
   runs: { views: number }[],
   targetTotal: number,
@@ -1723,16 +1856,21 @@ if (config.includeComments) {
      run is never given 1..9. */
   const ENGAGEMENT_MIN = 10;
 
+  /* Likes / shares / saves / reposts follow the view bands:
+       100-500 views  -> 10-15 each
+       500-1000 views -> 15-25 each
+       above that     -> scaled on the same shape
+     so a run's engagement always looks sensible next to its own views. */
   const likesRuns = config.includeLikes
-    ? distributeProportionalToViews(provisionalRuns, likesTotal, ENGAGEMENT_MIN)
+    ? distributeWithinViewBands(provisionalRuns, likesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const sharesRuns = config.includeShares
-    ? distributeProportionalToViews(provisionalRuns, sharesTotal, ENGAGEMENT_MIN)
+    ? distributeWithinViewBands(provisionalRuns, sharesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const savesRuns = config.includeSaves
-    ? distributeProportionalToViews(provisionalRuns, savesTotal, ENGAGEMENT_MIN)
+    ? distributeWithinViewBands(provisionalRuns, savesTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
   const repostsTarget = config.includeReposts
@@ -1741,9 +1879,12 @@ if (config.includeComments) {
         : Math.max(ENGAGEMENT_MIN, Math.floor(likesTotal / 3)))
     : 0;
   const repostsRuns = config.includeReposts
-    ? distributeProportionalToViews(provisionalRuns, repostsTarget, ENGAGEMENT_MIN)
+    ? distributeWithinViewBands(provisionalRuns, repostsTarget, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
 
+  /* Comments stay on the plain proportional split: the provider caps a single
+     comments order at 10 lines, so the view bands (which go up to 25+) don't
+     apply here. */
   const commentsRuns = config.includeComments
     ? distributeProportionalToViews(provisionalRuns, commentsTotal, ENGAGEMENT_MIN)
     : viewRuns.map(() => 0);
