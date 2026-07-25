@@ -1387,11 +1387,12 @@ function buildIambatmanChartData(plan: PatternPlan) {
       return point;
     });
 
-    /* Gaussian-weighted moving average, applied twice. A single pass leaves
-       faint corners; two passes of a wide kernel approximate a true Gaussian
-       and remove them without flattening the growth shape. */
-    const RADIUS = 12;
-    const PASSES = 2;
+    /* Gaussian-weighted moving average.
+       Deliberately a single narrow pass: a wider/repeated blur produces a
+       curve so clean it looks synthetic. This keeps a gentle organic
+       undulation while removing the hard corners of the raw schedule. */
+    const RADIUS = 6;
+    const PASSES = 1;
     const weights: number[] = [];
     for (let d = -RADIUS; d <= RADIUS; d += 1) {
       weights.push(Math.exp(-(d * d) / (2 * (RADIUS / 2) ** 2)));
@@ -1451,6 +1452,36 @@ function buildIambatmanChartData(plan: PatternPlan) {
       point.likesVisual = Math.min(point.likesVisual, point.views * CAP_LIKES_OF_VIEWS);
       point.sharesVisual = Math.min(point.sharesVisual, point.likesVisual * CAP_SHARES_OF_LIKES);
       point.commentsVisual = Math.min(point.commentsVisual, point.sharesVisual * CAP_COMMENTS_OF_SHARES);
+    }
+
+    /* Clip isolated spikes — run AFTER the caps, because clamping a series
+       against the one above it can itself introduce a corner. Limits how far
+       any point may sit from the midpoint of its neighbours, so only genuine
+       outliers are flattened and the general undulation survives. */
+    const MAX_DEVIATION = 0.02;   // fraction of each series' full range
+    for (const key of SERIES) {
+      const values = smoothed.map((point) => point[key]);
+      const range = Math.max(...values) - Math.min(...values);
+      if (range <= 0) continue;
+      const limit = range * MAX_DEVIATION;
+      for (let pass = 0; pass < 2; pass += 1) {
+        for (let i = 1; i < smoothed.length - 1; i += 1) {
+          const midpoint = (smoothed[i - 1][key] + smoothed[i + 1][key]) / 2;
+          const delta = smoothed[i][key] - midpoint;
+          if (Math.abs(delta) > limit) {
+            smoothed[i][key] = midpoint + Math.sign(delta) * limit;
+          }
+        }
+      }
+    }
+
+    // Clipping can nudge a point below its predecessor; restore ordering.
+    let mv = 0, ml = 0, ms = 0, mc = 0;
+    for (const point of smoothed) {
+      mv = point.views = Math.max(mv, point.views);
+      ml = point.likesVisual = Math.max(ml, Math.min(point.likesVisual, point.views * CAP_LIKES_OF_VIEWS));
+      ms = point.sharesVisual = Math.max(ms, Math.min(point.sharesVisual, point.likesVisual * CAP_SHARES_OF_LIKES));
+      mc = point.commentsVisual = Math.max(mc, Math.min(point.commentsVisual, point.sharesVisual * CAP_COMMENTS_OF_SHARES));
     }
 
     // Attach the real cumulative figures for the tooltip.
