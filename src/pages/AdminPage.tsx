@@ -25,6 +25,8 @@ import {
   clearStoredAdminPassword,
   fetchAdminUsers,
   setUserActive,
+  createOwnerAccount,
+  setUserOwner,
   fetchAdminDeposits,
   reviewDeposit,
   adjustUserWallet,
@@ -101,6 +103,10 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPass, setOwnerPass] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [creatingOwner, setCreatingOwner] = useState(false);
 
   const fireToast = (kind: "success" | "danger", msg: string) => {
     setToast({ kind, msg });
@@ -459,6 +465,42 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       setUsersError(e instanceof Error ? e.message : "Could not load users.");
     } finally {
       setUsersLoading(false);
+    }
+  };
+
+  const handleCreateOwner = async () => {
+    if (!ownerEmail.trim() || ownerPass.length < 8) {
+      fireToast("danger", "Enter an email and a password of at least 8 characters.");
+      return;
+    }
+    setCreatingOwner(true);
+    try {
+      const { promoted } = await createOwnerAccount(password, {
+        email: ownerEmail.trim(),
+        password: ownerPass,
+        name: ownerName.trim(),
+      });
+      fireToast("success", promoted
+        ? "Existing account promoted to owner."
+        : "Owner account created.");
+      setOwnerEmail(""); setOwnerPass(""); setOwnerName("");
+      await loadUsers();
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Could not create owner account.");
+    } finally {
+      setCreatingOwner(false);
+    }
+  };
+
+  const toggleOwner = async (u: AdminUser) => {
+    const next = !u.isOwner;
+    if (next && !confirm(`Make ${u.email} an OWNER?\n\nThey will be able to add funds to their own wallet without paying, and will see your commission on every order.`)) return;
+    try {
+      await setUserOwner(password, u.id, next);
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, isOwner: next } : x)));
+      fireToast("success", next ? "Account is now an owner." : "Owner status removed.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Update failed.");
     }
   };
 
@@ -1290,6 +1332,48 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
               <p className="py-8 text-center text-sm text-slate-500">No accounts yet.</p>
             )}
 
+            <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-800">
+                  Owner
+                </span>
+                <h3 className="text-sm font-semibold text-slate-900">Create an owner account</h3>
+              </div>
+              <p className="mb-3 text-xs text-slate-600">
+                Owner accounts add funds to their own wallet without paying, and see your
+                commission in rupees on every order. Use this for yourself.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Input
+                  label="Email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+                <Input
+                  label="Password"
+                  type="password"
+                  value={ownerPass}
+                  onChange={(e) => setOwnerPass(e.target.value)}
+                  placeholder="At least 8 characters"
+                />
+                <Input
+                  label="Name (optional)"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="Your name"
+                />
+              </div>
+              <div className="mt-3">
+                <Button variant="primary" size="sm" loading={creatingOwner} onClick={handleCreateOwner}>
+                  Create owner account
+                </Button>
+                <span className="ml-3 text-[11px] text-slate-500">
+                  If the email already exists, that account is promoted instead.
+                </span>
+              </div>
+            </div>
+
             {users.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -1307,7 +1391,14 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id} className="border-b border-slate-100 last:border-0">
-                        <td className="py-2.5 pr-3 font-medium text-slate-900">{u.email}</td>
+                        <td className="py-2.5 pr-3 font-medium text-slate-900">
+                          {u.email}
+                          {u.isOwner && (
+                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">
+                              Owner
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2.5 pr-3 text-slate-600">{u.name || "—"}</td>
                         <td className="py-2.5 pr-3 font-semibold tabular-nums text-emerald-700">
                           ₹{u.balance.toFixed(2)}
@@ -1324,6 +1415,9 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                         <td className="py-2.5 text-right whitespace-nowrap">
                           <Button variant="ghost" size="sm" onClick={() => handleAdjustWallet(u)}>
                             Wallet
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => toggleOwner(u)}>
+                            {u.isOwner ? "Un-owner" : "Make owner"}
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => toggleUser(u)}>
                             {u.isActive ? "Disable" : "Enable"}
