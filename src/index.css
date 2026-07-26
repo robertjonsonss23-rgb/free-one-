@@ -817,4 +817,22 @@ html.theme-ready body {
 .landing-auth h3 {
   color: #ffffff;
 }
+/* Landing links: the global `a { color: var(--brand) }` rule renders indigo,
+   which only reaches 3.1:1 on the near-black hero. Let the utility classes
+   win inside the landing shell. */
+.landing-shell a {
+  color: inherit;
+}
+.landing-shell a:hover {
+  color: #ffffff;
+}
+
+/* Body copy readability.
+   Tailwind's slate-300/400 measure ~2.3:1 against #0a0a0f, well under the
+   4.5:1 minimum. Brighten the muted greys used on this page only. */
+.landing-shell .text-slate-300 { color: #cbd5e1; }
+.landing-shell .text-slate-400 { color: #b3becd; }
+.landing-shell .text-slate-500 { color: #97a3b4; }
+.landing-auth .text-slate-300 { color: #cbd5e1; }
+.landing-auth .text-slate-400 { color: #b3becd; }
 
