@@ -756,6 +756,8 @@ export interface AuthUser {
   name: string;
   /** Wallet balance in rupees. */
   balance: number;
+  /** Owner accounts self-fund and see commission figures. */
+  isOwner: boolean;
   createdAt?: string;
 }
 
@@ -771,6 +773,7 @@ function normalizeUser(raw: unknown): AuthUser {
     email: String(o.email ?? ""),
     name: String(o.name ?? ""),
     balance: Number(o.balance) || 0,
+    isOwner: o.isOwner === true,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
   };
 }
@@ -850,6 +853,7 @@ export interface AdminUser {
   email: string;
   name: string;
   isActive: boolean;
+  isOwner: boolean;
   balance: number;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -869,6 +873,7 @@ export async function fetchAdminUsers(password: string): Promise<AdminUser[]> {
       email: String(o.email ?? ""),
       name: String(o.name ?? ""),
       isActive: o.isActive !== false,
+      isOwner: o.isOwner === true,
       balance: Number(o.balance) || 0,
       createdAt: typeof o.createdAt === "string" ? o.createdAt : null,
       lastLoginAt: typeof o.lastLoginAt === "string" ? o.lastLoginAt : null,
@@ -905,6 +910,8 @@ export interface QuoteResult {
   balance: number;
   /** True when the balance covers the total. */
   sufficient: boolean;
+  /** Only present for owner accounts. */
+  owner?: { panelCost: number; commission: number; markupPercent: number };
 }
 
 export async function fetchQuote(
@@ -924,6 +931,13 @@ export async function fetchQuote(
     partial: payload.partial === true,
     balance: Number(payload.balance) || 0,
     sufficient: payload.sufficient === true,
+    owner: payload.owner
+      ? {
+          panelCost: Number((payload.owner as Record<string, unknown>).panelCost) || 0,
+          commission: Number((payload.owner as Record<string, unknown>).commission) || 0,
+          markupPercent: Number((payload.owner as Record<string, unknown>).markupPercent) || 0,
+        }
+      : undefined,
   };
 }
 
@@ -1343,6 +1357,47 @@ export async function savePaymentSettings(
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
     body: JSON.stringify(settings),
+  });
+  await parseOrThrow(response);
+}
+
+
+/* ---- Owner account helpers ---- */
+
+/** Owner-only: credit (or debit, with a negative amount) your own wallet. */
+export async function selfTopUp(amount: number): Promise<number> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/wallet/self-topup`, {
+    method: "POST",
+    body: JSON.stringify({ amount }),
+  });
+  const payload = await parseOrThrow(response);
+  return Number(payload.balance) || 0;
+}
+
+/** Admin: create (or promote) an owner account. */
+export async function createOwnerAccount(
+  password: string,
+  account: { email: string; password: string; name?: string }
+): Promise<{ promoted: boolean }> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users/owner`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify(account),
+  });
+  const payload = await parseOrThrow(response);
+  return { promoted: payload.promoted === true };
+}
+
+/** Admin: toggle owner status on an existing account. */
+export async function setUserOwner(
+  password: string,
+  userId: string,
+  isOwner: boolean
+): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users/${userId}/owner`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ isOwner }),
   });
   await parseOrThrow(response);
 }
