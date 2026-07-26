@@ -835,4 +835,28 @@ html.theme-ready body {
 .landing-shell .text-slate-500 { color: #97a3b4; }
 .landing-auth .text-slate-300 { color: #cbd5e1; }
 .landing-auth .text-slate-400 { color: #b3becd; }
+/* The global `p { margin: 0 }` above beats Tailwind's `mx-auto`, so a
+   max-width paragraph inside a centred block stays pinned left. Restore
+   auto side-margins for centred copy on the landing page. */
+.landing-shell p.mx-auto {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Brighter body copy.
+   Grey-on-near-black was hard to read, so lift every muted tone used on
+   the landing page much closer to white. */
+.landing-shell .text-slate-300 { color: #eef2f7; }
+.landing-shell .text-slate-400 { color: #dde3ec; }
+.landing-shell .text-slate-500 { color: #c6cedb; }
+.landing-shell .text-slate-200 { color: #f6f8fb; }
+.landing-auth .text-slate-300 { color: #eef2f7; }
+.landing-auth .text-slate-400 { color: #dde3ec; }
+.landing-auth .text-slate-500 { color: #c6cedb; }
+/* Small coloured accents (the curve's window/steepness readouts and the FAQ
+   toggle) sat at ~2.3-3.0:1. Lighten the tints used at small sizes. */
+.landing-shell .text-blue-300 { color: #a9c9ff; }
+.landing-shell .text-blue-400 { color: #a9c9ff; }
+.landing-shell .text-purple-300 { color: #dcc4ff; }
+.landing-shell .text-purple-400 { color: #dcc4ff; }
 
