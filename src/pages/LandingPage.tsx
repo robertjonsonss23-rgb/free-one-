@@ -754,7 +754,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
               <h2 className="text-3xl font-extrabold sm:text-4xl">
                 Ready to run <GradientText>real campaigns</GradientText>?
               </h2>
-              <p className="mx-auto mt-3 max-w-lg text-slate-300">
+              <p className="mx-auto mt-4 max-w-lg text-center text-base leading-relaxed text-slate-300">
                 Create an account free. Add funds only when you place your first order.
               </p>
               <button
