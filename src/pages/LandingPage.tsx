@@ -27,10 +27,16 @@ function CountUp({ value, suffix = "", decimals = 0 }: { value: number; suffix?:
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
+    // Failsafe: if the observer never fires, still show the final number.
+    const failsafe = setTimeout(() => {
+      if (!done.current) { done.current = true; setShown(value); }
+    }, 1500);
+
     const io = new IntersectionObserver(
       ([entry]) => {
         if (!entry.isIntersecting || done.current) return;
         done.current = true;
+        clearTimeout(failsafe);
         const duration = 1400;
         const start = performance.now();
         const step = (now: number) => {
@@ -44,7 +50,7 @@ function CountUp({ value, suffix = "", decimals = 0 }: { value: number; suffix?:
       { threshold: 0.3 }
     );
     io.observe(node);
-    return () => io.disconnect();
+    return () => { io.disconnect(); clearTimeout(failsafe); };
   }, [value]);
 
   return (
@@ -71,16 +77,52 @@ function Section({
   );
 }
 
+/**
+ * Fade-up on scroll.
+ *
+ * Deliberately not framer's `whileInView`: that left sections stranded at
+ * opacity 0 when the observer didn't fire (long pages, fast scrolling,
+ * reduced-motion). Here the element starts visible and only animates if the
+ * observer is actually available, so content can never be invisible.
+ */
 function Reveal({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(true);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Only hide once we know we can reveal it again.
+    setShown(false);
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setShown(true);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.05, rootMargin: "0px 0px -40px 0px" }
+    );
+    io.observe(node);
+
+    // Safety net: never leave content hidden.
+    const failsafe = setTimeout(() => setShown(true), 1200);
+    return () => { io.disconnect(); clearTimeout(failsafe); };
+  }, []);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.5, delay }}
+    <div
+      ref={ref}
+      style={{
+        opacity: shown ? 1 : 0,
+        transform: shown ? "translateY(0)" : "translateY(18px)",
+        transition: `opacity .5s ease ${delay}s, transform .5s ease ${delay}s`,
+      }}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }
 
@@ -128,7 +170,7 @@ function CurvePreview() {
         ))}
       </div>
 
-      <div className="relative h-52 w-full overflow-hidden rounded-xl border border-white/5 bg-[#0d0d14]">
+      <div className="relative h-56 w-full overflow-hidden rounded-xl border border-white/5 bg-[#0d0d14] pb-6">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
           <defs>
             <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
@@ -163,7 +205,7 @@ function CurvePreview() {
             transition={{ duration: 0.9, ease: "easeInOut" }}
           />
         </svg>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-between px-3 pb-1 text-[9px] font-medium text-slate-500">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-between border-t border-white/5 bg-[#0d0d14] px-3 py-1.5 text-[10px] font-medium text-slate-400">
           <span>Launch</span><span>Warmup</span><span>Peak</span><span>Decay</span><span>Done</span>
         </div>
       </div>
@@ -171,16 +213,16 @@ function CurvePreview() {
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-bold text-white">{curve.label}</p>
-          <p className="text-xs text-slate-400">{curve.blurb}</p>
+          <p className="text-xs text-slate-300">{curve.blurb}</p>
         </div>
         <div className="flex gap-4 text-right">
           <div>
             <p className="text-[10px] uppercase tracking-wide text-slate-500">Window</p>
-            <p className="text-sm font-bold text-blue-400">{curve.hours}</p>
+            <p className="text-sm font-bold text-blue-300">{curve.hours}</p>
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-wide text-slate-500">Steepness</p>
-            <p className="text-sm font-bold text-purple-400">{curve.steepness}</p>
+            <p className="text-sm font-bold text-purple-300">{curve.steepness}</p>
           </div>
         </div>
       </div>
@@ -290,7 +332,7 @@ function AuthModal({
                     className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
                       mode === m
                         ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white"
-                        : "text-slate-400 hover:text-white"
+                        : "text-slate-300 hover:text-white"
                     }`}
                   >
                     {m === "login" ? "Sign in" : "Create account"}
@@ -301,7 +343,7 @@ function AuthModal({
               <h2 className="text-xl font-bold text-white">
                 {isSignup ? "Launch your account" : "Welcome back"}
               </h2>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm text-slate-300">
                 {isSignup
                   ? "Free to join. Add funds only when you're ready to order."
                   : "Sign in to reach your campaigns from any device."}
@@ -342,7 +384,7 @@ function AuthModal({
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-300 hover:text-white"
                   >
                     {showPassword ? "Hide" : "Show"}
                   </button>
@@ -378,7 +420,7 @@ function AuthModal({
                 </button>
               </form>
 
-              <p className="mt-4 text-center text-xs text-slate-500">
+              <p className="mt-4 text-center text-xs text-slate-400">
                 {isSignup ? "Already registered? " : "New here? "}
                 <button
                   type="button"
@@ -453,7 +495,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
             <div className="hidden items-center gap-7 md:flex">
               {[["Features", "features"], ["How it works", "how-it-works"], ["Pacing", "pacing"], ["FAQ", "faq"]].map(
                 ([label, id]) => (
-                  <a key={id} href={`#${id}`} className="text-sm font-medium text-slate-300 transition hover:text-white">
+                  <a key={id} href={`#${id}`} className="text-sm font-medium text-slate-200 transition hover:text-white">
                     {label}
                   </a>
                 )
@@ -513,7 +555,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
               <GradientText>Deliver like it&apos;s real.</GradientText>
             </h1>
 
-            <p className="mx-auto mt-5 max-w-2xl text-base text-slate-400 sm:text-lg">
+            <p className="mx-auto mt-5 max-w-2xl text-base text-slate-300 sm:text-lg">
               Split every order into hundreds of timed runs that follow a natural growth curve —
               warmup, peak, decay. Multi-panel routing, editable schedules and balanced engagement
               ratios, in one place.
@@ -534,7 +576,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                 See how it works
               </a>
             </div>
-            <p className="mt-4 text-xs text-slate-500">
+            <p className="mt-5 text-xs text-slate-400">
               Free to join · No subscription · Pay only for what you order
             </p>
           </motion.div>
@@ -557,7 +599,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                 className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center backdrop-blur-sm"
               >
                 <p className="text-2xl font-extrabold text-white sm:text-3xl">{s.v}</p>
-                <p className="mt-1 text-[11px] font-medium text-slate-400">{s.l}</p>
+                <p className="mt-1 text-xs font-medium text-slate-400">{s.l}</p>
               </div>
             ))}
           </motion.div>
@@ -570,7 +612,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
           <h2 className="text-center text-3xl font-extrabold sm:text-4xl">
             Built for <GradientText>believable growth</GradientText>
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-center text-slate-400">
+          <p className="mx-auto mt-4 max-w-xl text-center text-base leading-relaxed text-slate-300">
             The difference between a spike and a curve is whether it looks real.
           </p>
         </Reveal>
@@ -583,7 +625,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                   {f.icon}
                 </div>
                 <h3 className="mt-4 text-base font-bold text-white">{f.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-400">{f.body}</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-300">{f.body}</p>
               </div>
             </Reveal>
           ))}
@@ -597,7 +639,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
             <h2 className="text-3xl font-extrabold sm:text-4xl">
               Watch the <GradientText>curve</GradientText>, not a spike
             </h2>
-            <p className="mt-4 leading-relaxed text-slate-400">
+            <p className="mt-4 leading-relaxed text-slate-300">
               Every preset is a different delivery shape. Pick one and the whole schedule
               rebuilds — hundreds of runs, each with its own time and quantity.
             </p>
@@ -640,7 +682,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                   {s.n}
                 </div>
                 <h3 className="mt-4 text-base font-bold text-white">{s.title}</h3>
-                <p className="mt-1.5 text-sm text-slate-400">{s.body}</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-300">{s.body}</p>
               </div>
             </Reveal>
           ))}
@@ -678,7 +720,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                 >
                   <span className="text-sm font-semibold text-white">{f.q}</span>
                   <span
-                    className={`flex-shrink-0 text-lg text-purple-400 transition-transform ${
+                    className={`flex-shrink-0 text-xl text-purple-300 transition-transform ${
                       openFaq === i ? "rotate-45" : ""
                     }`}
                   >
@@ -693,7 +735,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.22 }}
                     >
-                      <p className="px-5 pb-4 text-sm leading-relaxed text-slate-400">{f.a}</p>
+                      <p className="px-5 pb-4 text-sm leading-relaxed text-slate-300">{f.a}</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -712,7 +754,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
               <h2 className="text-3xl font-extrabold sm:text-4xl">
                 Ready to run <GradientText>real campaigns</GradientText>?
               </h2>
-              <p className="mx-auto mt-3 max-w-lg text-slate-400">
+              <p className="mx-auto mt-3 max-w-lg text-slate-300">
                 Create an account free. Add funds only when you place your first order.
               </p>
               <button
@@ -738,7 +780,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
             </div>
             <span className="text-sm font-bold text-slate-300">TRUESMM</span>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-400">
             © {new Date().getFullYear()} TRUESMM. All rights reserved.
           </p>
         </div>
