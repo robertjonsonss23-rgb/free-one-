@@ -904,7 +904,16 @@ export function NewOrderPage({
                 { key: "comments" as const, label: "Comments", emoji: "💬", on: includeComments, max: 2,  accent: "accent-amber-600" },
               ]).filter((row) => row.on).map((row) => {
                 const pct = effectiveRatios[row.key];
-                const units = Math.max(0, Math.floor((totalViews * pct) / 100));
+                /* Show what the schedule will ACTUALLY deliver, not the raw
+                   percentage. Each run is capped by its view band, so beyond a
+                   few percent the plan can't absorb more and the two diverge.
+                   Reading the real plan keeps the label honest. */
+                const units = (safePlan.runs || []).reduce(
+                  (sum, r) => sum + (Number((r as unknown as Record<string, number>)[row.key]) || 0),
+                  0
+                );
+                const requested = Math.max(0, Math.floor((totalViews * pct) / 100));
+                const capped = requested > units + 1;
                 return (
                   <div key={row.key}>
                     <div className="mb-1 flex items-center justify-between gap-2">
@@ -918,6 +927,14 @@ export function NewOrderPage({
                         <span className="text-[10px] font-semibold tabular-nums text-slate-500">
                           {pct.toFixed(2)}%
                         </span>
+                        {capped && (
+                          <span
+                            title={`Capped: ${requested.toLocaleString()} requested, but each run is limited by its view count. Add more views or a longer window to deliver more.`}
+                            className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700"
+                          >
+                            MAX
+                          </span>
+                        )}
                       </span>
                     </div>
                     <input
@@ -1065,6 +1082,22 @@ export function NewOrderPage({
                     {totalViews.toLocaleString()} views over {estimatedRunCount} runs
                     {quote.partial ? " · some rates unavailable" : ""}
                   </p>
+                  {/* Owner-only: what this order actually earns you */}
+                  {quote.owner && (
+                    <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5">
+                      <p className="text-[10px] font-bold text-amber-800">
+                        <span className="mr-1 rounded bg-amber-200 px-1 py-0.5 text-[9px] uppercase">
+                          Owner
+                        </span>
+                        Panel cost ₹{quote.owner.panelCost.toFixed(2)} · Commission{" "}
+                        <span className="text-emerald-700">
+                          ₹{quote.owner.commission.toFixed(2)}
+                        </span>{" "}
+                        ({quote.owner.markupPercent}% markup)
+                      </p>
+                    </div>
+                  )}
+
                   {/* Wallet position for this order */}
                   <div className="w-full">
                     {quote.sufficient ? (
