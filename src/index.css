@@ -901,4 +901,96 @@ html.theme-ready body {
 .landing-auth  .text-slate-400 { color: #dde3ec; }
 .landing-shell .text-slate-500,
 .landing-auth  .text-slate-500 { color: #c6cedb; }
+/* ============================================================
+   DARK MODE — APP SURFACES
+   Several palette steps used across the app were never remapped
+   for dark mode, so they render as light-on-light or dark-on-dark.
+   These are the ones actually measured as failing on the New
+   Order page.
+   ============================================================ */
+
+/* --- Table headers were a white strip (#f8fafc) in dark mode --- */
+.dark thead.bg-slate-50 {
+  background-color: #161c28;
+}
+.dark thead.bg-slate-50,
+.dark thead .text-slate-500 {
+  color: #aab4c4;
+}
+
+/* --- Row hover was a white flash --- */
+.dark tr.hover\:bg-slate-50:hover {
+  background-color: rgb(255 255 255 / 0.04);
+}
+
+/* --- Inline edit input in the run table --- */
+.dark input.bg-white {
+  background-color: #0f1523;
+  color: #eef2f7;
+}
+
+/* --- Hero banner subtitle sat at 1.43:1 --- */
+.dark .text-indigo-100 { color: #e0e7ff; }
+.dark .text-amber-50   { color: #fffbeb; }
+
+/* --- Preset family accents (Whop / Clipster) were unreadable ---
+   violet-600 and orange-500/600 are mid-tones that vanish on a
+   dark panel; lift them to their light tints. */
+.dark .text-violet-600 { color: #c4b5fd; }
+.dark .text-violet-700 { color: #ddd6fe; }
+.dark .text-orange-600 { color: #fdba74; }
+.dark .text-orange-700 { color: #fed7aa; }
+
+/* Idle preset chips use bg-white, which the dark theme turns into a
+   dark panel — good — but their borders/text need lifting. */
+.dark .border-violet-200 { border-color: #4c3a8a; }
+.dark .border-orange-200 { border-color: #7c4a1d; }
+
+/* --- Emerald "Auto"/active pills: keep white text on the green --- */
+.dark .bg-emerald-600,
+.dark .bg-emerald-600 * { color: #ffffff; }
+
+/* --- Section card borders were nearly invisible --- */
+.dark .border-indigo-200  { border-color: #2f3a63; }
+.dark .border-violet-200  { border-color: #4c3a8a; }
+.dark .border-amber-200   { border-color: #5c4718; }
+.dark .border-emerald-200 { border-color: #1d4b38; }
+.dark .border-orange-200\/70 { border-color: rgb(124 74 29 / 0.7); }
+/* Hero banner stat labels (VIEWS / RUNS / HOURS / PATTERN) sit on a
+   translucent white chip over a purple gradient; indigo-100 was too close
+   to that backing. */
+.dark .bg-white\/10 .text-indigo-100,
+.dark .bg-white\/10 .text-indigo-200 { color: #ffffff; }
+.dark .text-indigo-200 { color: #e7ebff; }
+/* --- Dark-mode polish: softer chrome so content leads --- */
+
+/* Section card borders were vivid pastels; mute them to subtle tints. */
+.dark .border-2.border-indigo-200  { border-color: rgb(99 102 241 / 0.28); }
+.dark .border-2.border-violet-200  { border-color: rgb(139 92 246 / 0.28); }
+.dark .border-2.border-amber-200   { border-color: rgb(245 158 11 / 0.26); }
+.dark .border-2.border-emerald-200 { border-color: rgb(16 185 129 / 0.26); }
+.dark .border-2.border-slate-200   { border-color: rgb(255 255 255 / 0.10); }
+.dark .border-2.border-orange-200\/70 { border-color: rgb(249 115 22 / 0.26); }
+.dark .border-2.border-amber-100   { border-color: rgb(245 158 11 / 0.20); }
+
+/* Inputs inside cards: lift off the panel so fields are findable. */
+.dark .border-2.border-slate-200:is(input, textarea, select) {
+  background-color: #0f1523;
+  border-color: rgb(255 255 255 / 0.12);
+}
+
+/* Tinted info strips read as muddy blocks on dark; soften the fills. */
+.dark .bg-amber-50\/40  { background-color: rgb(245 158 11 / 0.07); }
+.dark .bg-amber-50       { background-color: rgb(245 158 11 / 0.10); }
+.dark .bg-indigo-50      { background-color: rgb(99 102 241 / 0.12); }
+.dark .bg-emerald-50     { background-color: rgb(16 185 129 / 0.12); }
+.dark .bg-violet-50\/50 { background-color: rgb(139 92 246 / 0.10); }
+.dark .bg-rose-50        { background-color: rgb(244 63 94 / 0.12); }
+.dark .bg-sky-50         { background-color: rgb(14 165 233 / 0.12); }
+
+/* Chart gridlines were hard white-ish dashes. */
+.dark .recharts-cartesian-grid line { stroke: rgb(255 255 255 / 0.07) !important; }
+
+/* Sticky deploy bar: give it real separation from the page. */
+.dark .shadow-2xl { --tw-shadow-color: rgb(0 0 0 / 0.6); }
 
