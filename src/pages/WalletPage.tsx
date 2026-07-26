@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Button, Card, Input, InfoBanner, Spinner, StatusPill } from "../components/ui";
 import {
+  selfTopUp,
   fetchWallet,
   fetchPaymentMethods,
   submitDeposit,
@@ -11,6 +12,8 @@ import {
 
 interface WalletPageProps {
   onBalanceChange?: (balance: number) => void;
+  /** Owner accounts can fund themselves without a real payment. */
+  isOwner?: boolean;
 }
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000, 2000];
@@ -35,7 +38,7 @@ const TX_LABEL: Record<string, string> = {
   admin_debit: "Removed by admin",
 };
 
-export function WalletPage({ onBalanceChange }: WalletPageProps) {
+export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps) {
   const [wallet, setWallet] = useState<WalletData | null>(null);
   const [methods, setMethods] = useState<PaymentMethods | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +53,8 @@ export function WalletPage({ onBalanceChange }: WalletPageProps) {
   const [formError, setFormError] = useState("");
   const [success, setSuccess] = useState("");
   const [copied, setCopied] = useState("");
+  const [ownerAmount, setOwnerAmount] = useState("");
+  const [ownerBusy, setOwnerBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -177,6 +182,72 @@ export function WalletPage({ onBalanceChange }: WalletPageProps) {
           </div>
         </div>
       </motion.div>
+
+      {/* ---- Owner self top-up ---- */}
+      {isOwner && (
+        <Card>
+          <div className="mb-3 flex items-center gap-2">
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">
+              Owner
+            </span>
+            <h2 className="text-base font-semibold text-slate-900">Add funds directly</h2>
+          </div>
+          <p className="mb-3 text-sm text-slate-500">
+            This account can credit its own wallet without a payment. Use a negative
+            amount to deduct.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-40 flex-1">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Amount (₹)
+              </label>
+              <input
+                type="number"
+                value={ownerAmount}
+                onChange={(e) => setOwnerAmount(e.target.value)}
+                placeholder="e.g. 5000"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <Button
+              variant="primary"
+              loading={ownerBusy}
+              onClick={async () => {
+                const value = Number(ownerAmount);
+                if (!Number.isFinite(value) || value === 0) {
+                  setLoadError("Enter a non-zero amount.");
+                  return;
+                }
+                setOwnerBusy(true);
+                setLoadError("");
+                try {
+                  const balance = await selfTopUp(value);
+                  onBalanceChange?.(balance);
+                  setOwnerAmount("");
+                  setSuccess(`Wallet updated. New balance ${formatMoney(balance)}.`);
+                  await load();
+                } catch (e) {
+                  setLoadError(e instanceof Error ? e.message : "Could not update wallet.");
+                } finally {
+                  setOwnerBusy(false);
+                }
+              }}
+            >
+              Update balance
+            </Button>
+            {[1000, 5000, 10000].map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setOwnerAmount(String(q))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300"
+              >
+                ₹{q.toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* ---- Add money ---- */}
       {showAdd && (
@@ -351,7 +422,7 @@ export function WalletPage({ onBalanceChange }: WalletPageProps) {
                   {formError && <InfoBanner kind="danger">{formError}</InfoBanner>}
 
                   <InfoBanner kind="info">
-                    Your wallet is credited after we verify the payment — usually within a few hours.
+                    Your wallet is credited after we verify the payment — usually within 5 minutes.
                   </InfoBanner>
 
                   <Button type="submit" variant="primary" size="lg" fullWidth loading={submitting}>
