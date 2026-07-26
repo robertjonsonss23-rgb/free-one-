@@ -393,7 +393,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     }
 
     if (activePage === "wallet") {
-      return <WalletPage onBalanceChange={setBalance} />;
+      return <WalletPage onBalanceChange={setBalance} isOwner={user.isOwner} />;
     }
 
 
