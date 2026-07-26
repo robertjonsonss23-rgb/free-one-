@@ -1401,21 +1401,42 @@ function distributeWithinViewBands(
   const floorSum = floors.reduce((sum, v) => sum + v, 0);
 
   let chosen = eligible;
-  if (floorSum > total) {
-    /* Not enough budget for every eligible run at its band floor. Work out
-       how many runs we can actually afford using the *average* floor (which
-       may be 15 or 25, not the global 10) — sizing by the global minimum
-       would overshoot the target badly. */
-    const averageFloor = floorSum / eligible.length;
-    const affordable = Math.max(1, Math.floor(total / Math.max(1, averageFloor)));
-    const wanted = Math.min(eligible.length, affordable);
-    const stride = eligible.length / wanted;
+
+  /* Decide how many runs should participate.
+     Spreading the budget across every eligible run pins each one at its band
+     floor (e.g. 250 likes over 24 runs = 10.4 each), which produces the
+     10,10,10,11,10… pattern. Targeting a comfortably higher average per run
+     leaves headroom to vary, so the same budget reads 11,14,13,15,12…
+     Fewer runs each doing more, rather than many runs all at the minimum. */
+  const averageFloorAll = floorSum / eligible.length;
+  const comfortable = Math.max(1, Math.floor(total / Math.max(1, averageFloorAll * 1.15)));
+  if (comfortable < eligible.length) {
+    const stride = eligible.length / comfortable;
     const picked: number[] = [];
-    for (let i = 0; i < wanted; i += 1) {
+    for (let i = 0; i < comfortable; i += 1) {
       const idx = eligible[Math.min(eligible.length - 1, Math.round(i * stride + stride / 2))];
       if (!picked.includes(idx)) picked.push(idx);
     }
     chosen = picked.sort((a, b) => a - b);
+  }
+
+  const chosenFloorSum = chosen.reduce(
+    (sum, i) => sum + engagementBandForViews(runs[i].views)!.min, 0
+  );
+
+  if (chosenFloorSum > total) {
+    /* Still short: fall back to whatever the budget can actually cover. */
+    const averageFloor = chosenFloorSum / chosen.length;
+    const affordable = Math.max(1, Math.floor(total / Math.max(1, averageFloor)));
+    const wanted = Math.min(chosen.length, affordable);
+    const stride2 = chosen.length / wanted;
+    const base = chosen;
+    const picked2: number[] = [];
+    for (let i = 0; i < wanted; i += 1) {
+      const idx = base[Math.min(base.length - 1, Math.round(i * stride2 + stride2 / 2))];
+      if (!picked2.includes(idx)) picked2.push(idx);
+    }
+    chosen = picked2.sort((a, b) => a - b);
 
     /* Trim further if the chosen floors still exceed the budget — this can
        happen when the picked runs skew towards higher bands. */
@@ -1446,7 +1467,15 @@ function distributeWithinViewBands(
       const band = engagementBandForViews(runs[i].views)!;
       return band.max - values[k];
     });
-    const weights = chosen.map((i) => Math.max(0, runs[i].views || 0));
+
+    /* Weight by views, but jitter each weight so runs with near-identical
+       view counts don't all resolve to the same number. Without this the
+       schedule reads 11,11,11,11,11… which looks machine-generated; with it
+       the same budget spreads as 11,14,13,15,12… */
+    const weights = chosen.map((i) => {
+      const views = Math.max(1, runs[i].views || 0);
+      return views * random(0.62, 1.38);
+    });
     const weightSum = weights.reduce((sum, v) => sum + v, 0);
 
     if (weightSum > 0) {
@@ -1457,13 +1486,55 @@ function distributeWithinViewBands(
         remaining -= give;
       }
     }
-    // Hand out whatever is left, one at a time, to runs with headroom.
+
+    /* Hand out the remainder in a random order rather than cycling from
+       index 0, which would otherwise stack the leftovers onto the first
+       few runs and flatten them again. */
+    const order = chosen.map((_, k) => k);
+    for (let k = order.length - 1; k > 0; k -= 1) {
+      const j = Math.floor(Math.random() * (k + 1));
+      [order[k], order[j]] = [order[j], order[k]];
+    }
     let guard = 0;
     while (remaining > 0 && guard < values.length * 40) {
-      const k = guard % values.length;
+      const k = order[guard % order.length];
       const band = engagementBandForViews(runs[chosen[k]].views)!;
       if (values[k] < band.max) { values[k] += 1; remaining -= 1; }
       guard += 1;
+    }
+
+    /* De-flatten: break up stretches of identical values by trading single
+       units between neighbours. Each trade keeps the total exact and stays
+       inside both runs' bands. Several passes are needed because fixing one
+       pair can create a new match with the following run. */
+    const bandAt = (k: number) => engagementBandForViews(runs[chosen[k]].views)!;
+    for (let pass = 0; pass < 6; pass += 1) {
+      let changed = false;
+      for (let k = 1; k < values.length; k += 1) {
+        if (values[k] !== values[k - 1]) continue;
+        const bK = bandAt(k);
+        const bP = bandAt(k - 1);
+        // Prefer pushing the earlier run up (front-loaded reads naturally).
+        if (values[k] > bK.min && values[k - 1] < bP.max) {
+          values[k] -= 1; values[k - 1] += 1; changed = true;
+        } else if (values[k] < bK.max && values[k - 1] > bP.min) {
+          values[k] += 1; values[k - 1] -= 1; changed = true;
+        } else {
+          // Neighbours are boxed in; trade with a nearby run that has slack.
+          for (let d = 2; d < Math.min(6, values.length); d += 1) {
+            const j = k - d >= 0 ? k - d : k + d;
+            if (j < 0 || j >= values.length) continue;
+            const bJ = bandAt(j);
+            if (values[k] > bK.min && values[j] < bJ.max && values[j] !== values[k] - 1) {
+              values[k] -= 1; values[j] += 1; changed = true; break;
+            }
+            if (values[k] < bK.max && values[j] > bJ.min && values[j] !== values[k] + 1) {
+              values[k] += 1; values[j] -= 1; changed = true; break;
+            }
+          }
+        }
+      }
+      if (!changed) break;
     }
   } else if (remaining < 0) {
     // Over budget: trim from the smallest runs first, never below the floor.
