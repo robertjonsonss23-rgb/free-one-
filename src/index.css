@@ -859,4 +859,9 @@ html.theme-ready body {
 .landing-shell .text-blue-400 { color: #a9c9ff; }
 .landing-shell .text-purple-300 { color: #dcc4ff; }
 .landing-shell .text-purple-400 { color: #dcc4ff; }
+/* FAQ question text and the secondary hero button must be pure white, not
+   the muted tones the global rules would otherwise apply. */
+.landing-shell .text-slate-200 { color: #ffffff; }
+.landing-shell a.\!text-white,
+.landing-shell a.\!text-white:hover { color: #ffffff; }
 
