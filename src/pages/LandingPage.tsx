@@ -571,7 +571,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
               </button>
               <a
                 href="#how-it-works"
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-7 py-3.5 text-center text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/10 sm:w-auto"
+                className="w-full rounded-xl border border-white/25 bg-white/10 px-7 py-3.5 text-center text-base font-bold !text-white backdrop-blur-sm transition hover:bg-white/20 sm:w-auto"
               >
                 See how it works
               </a>
@@ -598,8 +598,8 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                 key={i}
                 className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center backdrop-blur-sm"
               >
-                <p className="text-2xl font-extrabold text-white sm:text-3xl">{s.v}</p>
-                <p className="mt-1 text-xs font-medium text-slate-400">{s.l}</p>
+                <p className="text-3xl font-extrabold text-white sm:text-4xl">{s.v}</p>
+                <p className="mt-1.5 text-xs font-semibold text-slate-300">{s.l}</p>
               </div>
             ))}
           </motion.div>
@@ -718,7 +718,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                   onClick={() => setOpenFaq(openFaq === i ? null : i)}
                   className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
                 >
-                  <span className="text-sm font-semibold text-white">{f.q}</span>
+                  <span className="text-base font-bold text-white">{f.q}</span>
                   <span
                     className={`flex-shrink-0 text-xl text-purple-300 transition-transform ${
                       openFaq === i ? "rotate-45" : ""
@@ -735,7 +735,7 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.22 }}
                     >
-                      <p className="px-5 pb-4 text-sm leading-relaxed text-slate-300">{f.a}</p>
+                      <p className="px-5 pb-4 text-sm leading-relaxed text-slate-200">{f.a}</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
