@@ -12,7 +12,7 @@ import {
 
 interface WalletPageProps {
   onBalanceChange?: (balance: number) => void;
-  /** Owner accounts can fund themselves without a real payment. */
+  /** Owner accounts can fund themselves without a real payment. */ 
   isOwner?: boolean;
 }
 
