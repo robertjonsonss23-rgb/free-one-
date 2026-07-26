@@ -864,4 +864,41 @@ html.theme-ready body {
 .landing-shell .text-slate-200 { color: #ffffff; }
 .landing-shell a.\!text-white,
 .landing-shell a.\!text-white:hover { color: #ffffff; }
+/* ============================================================
+   LANDING PAGE — THEME ISOLATION
+   The landing page is ALWAYS dark, but the app's `.dark` theme
+   remaps --color-white to #10151f (so "white" cards become dark
+   panels). That made every `text-white` / `bg-white/x` on this
+   page render near-black on near-black — invisible.
+
+   Re-pin the neutral ramp to its true light values inside the
+   landing shell so utilities behave normally here, regardless of
+   which theme the signed-in app is using.
+   ============================================================ */
+.landing-shell,
+.landing-auth {
+  --color-white:     #ffffff;
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+}
+
+/* With the ramp restored, `text-white` is genuinely white again.
+   Keep the readability lifts for the muted greys used as body copy. */
+.landing-shell .text-slate-200,
+.landing-auth  .text-slate-200 { color: #ffffff; }
+.landing-shell .text-slate-300,
+.landing-auth  .text-slate-300 { color: #eef2f7; }
+.landing-shell .text-slate-400,
+.landing-auth  .text-slate-400 { color: #dde3ec; }
+.landing-shell .text-slate-500,
+.landing-auth  .text-slate-500 { color: #c6cedb; }
 
