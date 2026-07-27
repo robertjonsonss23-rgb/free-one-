@@ -4,6 +4,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NewOrderPage } from "./pages/NewOrderPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { WalletPage } from "./pages/WalletPage";
+import { PaywallPage } from "./pages/PaywallPage";
 import type {
   CreatedOrder,
   RunStatus,
@@ -12,8 +13,10 @@ import {
   updateOrderControl,
   fetchOrderStatus,
   fetchOrdersForCurrentUser,
+  fetchOrderAccess,
   logout,
   type AuthUser,
+  type OrderAccessStatus,
 } from "./utils/api";
 import { Button, Spinner } from "./components/ui";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -172,6 +175,28 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
   const [controllingOrderId, setControllingOrderId] = useState<string | null>(
     null
   );
+
+  /* ---- New Order paywall ----
+     `null` means "not checked yet"; until it resolves we don't gate anything,
+     so a slow backend never flashes a paywall at someone who has access. */
+  const [orderAccess, setOrderAccess] = useState<OrderAccessStatus | null>(null);
+
+  const refreshOrderAccess = useCallback(async () => {
+    try {
+      const next = await fetchOrderAccess();
+      setOrderAccess(next);
+      return next;
+    } catch {
+      // Network hiccup: leave the previous answer in place rather than
+      // locking someone out of a page they have paid for.
+      return null;
+    }
+  }, []);
+
+  useEffect(() => { refreshOrderAccess(); }, [refreshOrderAccess]);
+
+  // Only gate once we actually know the answer.
+  const orderPageLocked = orderAccess !== null && orderAccess.allowed === false;
 
   const isSyncingRef = useRef(false);
   const lastSyncTimeRef = useRef(0);
@@ -375,6 +400,15 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
 
   const content = useMemo(() => {
     if (activePage === "new-order") {
+      if (orderPageLocked) {
+        return (
+          <PaywallPage
+            onUnlocked={() => { refreshOrderAccess(); }}
+            onBalanceChange={setBalance}
+            onGoToWallet={() => navigateToPage("wallet")}
+          />
+        );
+      }
       return (
         <NewOrderPage
           orders={orders}
@@ -519,6 +553,8 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     syncOrdersWithBackend,
     ordersLoading,
     balance,
+    orderPageLocked,
+    refreshOrderAccess,
   ]);
 
   const currentItem = NAV_ITEMS.find((item) => item.key === activePage)!;
@@ -568,6 +604,15 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
                     />
                   )}
                   <span className="relative">{item.label}</span>
+                  {/* Padlock hints that this page needs a one-time unlock. */}
+                  {item.key === "new-order" && orderPageLocked && (
+                    <span
+                      title="Locked — one-time unlock required"
+                      className="relative ml-auto rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+                    >
+                      🔒
+                    </span>
+                  )}
                 </button>
               );
             })}
