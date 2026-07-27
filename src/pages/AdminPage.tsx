@@ -11,7 +11,7 @@ import {
 import type { ApiService } from "../types/order";
 import { ThemeToggle } from "../components/ThemeToggle";
 import type { Theme } from "../utils/theme";
-import { 
+import {
   SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
@@ -27,6 +27,7 @@ import {
   setUserActive,
   createOwnerAccount,
   setUserOwner,
+  setUserOrderAccess,
   fetchAdminDeposits,
   reviewDeposit,
   adjustUserWallet,
@@ -72,12 +73,13 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
 
-  const [tab, setTab] = useState<"panels" | "services" | "payments" | "users">("panels");
+  const [tab, setTab] = useState<"panels" | "services" | "payments" | "paywall" | "users">("panels");
 
   // Payments
   const [deposits, setDeposits] = useState<AdminDeposit[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [depositFilter, setDepositFilter] = useState<"pending" | "all">("pending");
+  const [pendingAccessCount, setPendingAccessCount] = useState(0);
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [depositsError, setDepositsError] = useState("");
   const [reviewingId, setReviewingId] = useState<string | null>(null);
@@ -123,13 +125,18 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   }, [applyConfig]);
 
   /* ---- Payments ---- */
-  const loadDeposits = useCallback(async (pw: string, filter: "pending" | "all") => {
+  const loadDeposits = useCallback(async (
+    pw: string,
+    filter: "pending" | "all",
+    purpose: "all" | "wallet" | "access" = "all"
+  ) => {
     setDepositsLoading(true);
     setDepositsError("");
     try {
-      const result = await fetchAdminDeposits(pw, filter);
+      const result = await fetchAdminDeposits(pw, filter, purpose);
       setDeposits(result.deposits);
       setPendingCount(result.pendingCount);
+      setPendingAccessCount(result.pendingAccessCount);
     } catch (e) {
       setDepositsError(e instanceof Error ? e.message : "Could not load deposits.");
     } finally {
@@ -154,7 +161,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         await loadConfig(saved);
         setPassword(saved);
         setAuthed(true);
-        loadDeposits(saved, "pending");
+        loadDeposits(saved, "pending", "wallet");
         loadPaymentSettings(saved);
       } catch {
         clearStoredAdminPassword();
@@ -175,7 +182,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       await loadConfig(password);
       setStoredAdminPassword(password);
       setAuthed(true);
-      loadDeposits(password, "pending");
+      loadDeposits(password, "pending", "wallet");
       loadPaymentSettings(password);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Login failed.");
@@ -299,26 +306,42 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   };
 
   const handleReview = async (d: AdminDeposit, action: "approve" | "reject") => {
+    const isAccess = d.purpose === "access";
     const verb = action === "approve" ? "Approve" : "Reject";
     let note = "";
     if (action === "reject") {
       note = prompt(`Why is this rejected? (shown to ${d.userEmail})`) || "";
-    } else if (!confirm(`${verb} ₹${d.amount.toFixed(2)} for ${d.userEmail}?\n\nUTR: ${d.reference}\n\nOnly approve after confirming the money reached your account.`)) {
+    } else if (
+      !confirm(
+        `${verb} ₹${d.amount.toFixed(2)} for ${d.userEmail}?\n\n` +
+          `${d.method === "upi" ? "UTR" : "TX"}: ${d.reference}\n\n` +
+          (isAccess
+            ? "This unlocks the New Order page on their account for life."
+            : "This credits their wallet.") +
+          "\n\nOnly approve after confirming the money reached your account."
+      )
+    ) {
       return;
     }
     setReviewingId(d.id);
+    // Refresh whichever queue this row came from.
+    const queue: "wallet" | "access" = isAccess ? "access" : "wallet";
     try {
       const result = await reviewDeposit(password, d.id, action, note);
       fireToast(
         "success",
-        action === "approve"
-          ? `Approved. ${d.userEmail} now has ₹${(result.newBalance ?? 0).toFixed(2)}.`
-          : "Deposit rejected."
+        action === "reject"
+          ? `${isAccess ? "Unlock request" : "Deposit"} rejected.`
+          : isAccess
+          ? `Approved. ${d.userEmail} can now use the New Order page.`
+          : `Approved. ${d.userEmail} now has ₹${(result.newBalance ?? 0).toFixed(2)}.`
       );
-      await loadDeposits(password, depositFilter);
+      await loadDeposits(password, depositFilter, queue);
+      // The Users tab shows a lock column, so keep it honest.
+      if (isAccess && users.length > 0) loadUsers();
     } catch (e) {
       fireToast("danger", e instanceof Error ? e.message : "Review failed.");
-      await loadDeposits(password, depositFilter);
+      await loadDeposits(password, depositFilter, queue);
     } finally {
       setReviewingId(null);
     }
@@ -343,6 +366,10 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         cryptoEnabled: payment.cryptoEnabled,
         upiMethods: payment.upiMethods,
         cryptoMethods: payment.cryptoMethods,
+        paywallEnabled: payment.paywallEnabled,
+        paywallPrice: payment.paywallPrice,
+        paywallTitle: payment.paywallTitle,
+        paywallBlurb: payment.paywallBlurb,
       });
       fireToast("success", "Payment settings saved.");
       await loadPaymentSettings(password);
@@ -353,8 +380,44 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     }
   };
 
+  /* Saves ONLY the paywall fields, so flipping the switch can never
+     disturb the UPI / crypto configuration sitting in the same document. */
+  const [savingPaywall, setSavingPaywall] = useState(false);
+  const savePaywall = async (patch: Partial<AdminPaymentSettings>) => {
+    if (!payment) return;
+    const next = { ...payment, ...patch };
+    setPayment(next);
+    setSavingPaywall(true);
+    try {
+      await savePaymentSettings(password, {
+        paywallEnabled: next.paywallEnabled,
+        paywallPrice: next.paywallPrice,
+        paywallTitle: next.paywallTitle,
+        paywallBlurb: next.paywallBlurb,
+      });
+      fireToast("success", "Paywall settings saved.");
+      await loadPaymentSettings(password);
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Save failed.");
+      await loadPaymentSettings(password);
+    } finally {
+      setSavingPaywall(false);
+    }
+  };
+
   const patchPayment = (patch: Partial<AdminPaymentSettings>) =>
     setPayment((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  /* The two queues share one collection, so each tab filters client-side too.
+     That way a stale fetch never leaks wallet rows into the unlock list. */
+  const accessRequests = useMemo(
+    () => deposits.filter((d) => d.purpose === "access"),
+    [deposits]
+  );
+  const walletRequests = useMemo(
+    () => deposits.filter((d) => d.purpose !== "access"),
+    [deposits]
+  );
 
   const addUpiMethod = () =>
     patchPayment({
@@ -504,6 +567,24 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     }
   };
 
+  /* Comp or revoke the New Order unlock without any payment. */
+  const toggleOrderAccess = async (u: AdminUser) => {
+    const next = !u.hasOrderAccess;
+    const question = next
+      ? `Give ${u.email} free access to the New Order page?\n\nThey will not be charged the unlock fee.`
+      : `Revoke ${u.email}'s New Order access?\n\nThey will see the paywall again (only while the paywall is switched on).`;
+    if (!confirm(question)) return;
+    try {
+      await setUserOrderAccess(password, u.id, next);
+      setUsers((prev) =>
+        prev.map((x) => (x.id === u.id ? { ...x, hasOrderAccess: next } : x))
+      );
+      fireToast("success", next ? "Access granted." : "Access revoked.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Update failed.");
+    }
+  };
+
   const toggleUser = async (u: AdminUser) => {
     const next = !u.isActive;
     if (!next && !confirm(`Disable ${u.email}? They will be signed out immediately.`)) return;
@@ -614,8 +695,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-5">
-        <div className="grid w-full max-w-xl grid-cols-4 gap-1 rounded-lg bg-slate-200/70 p-1">
-          {(["panels", "services", "payments", "users"] as const).map((key) => (
+        <div className="grid w-full max-w-2xl grid-cols-5 gap-1 rounded-lg bg-slate-200/70 p-1">
+          {(["panels", "services", "payments", "paywall", "users"] as const).map((key) => (
             <button
               key={key}
               type="button"
@@ -623,7 +704,12 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 setTab(key);
                 if (key === "users" && users.length === 0) loadUsers();
                 if (key === "payments") {
-                  loadDeposits(password, depositFilter);
+                  loadDeposits(password, depositFilter, "wallet");
+                  if (!payment) loadPaymentSettings(password);
+                }
+                if (key === "paywall") {
+                  loadDeposits(password, "pending", "access");
+                  setDepositFilter("pending");
                   if (!payment) loadPaymentSettings(password);
                 }
               }}
@@ -635,6 +721,11 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
               {key === "payments" && pendingCount > 0 && (
                 <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">
                   {pendingCount}
+                </span>
+              )}
+              {key === "paywall" && pendingAccessCount > 0 && (
+                <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">
+                  {pendingAccessCount}
                 </span>
               )}
             </button>
@@ -905,7 +996,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     onChange={(e) => {
                       const next = e.target.value as "pending" | "all";
                       setDepositFilter(next);
-                      loadDeposits(password, next);
+                      loadDeposits(password, next, "wallet");
                     }}
                     className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                   >
@@ -916,7 +1007,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     variant="secondary"
                     size="sm"
                     loading={depositsLoading}
-                    onClick={() => loadDeposits(password, depositFilter)}
+                    onClick={() => loadDeposits(password, depositFilter, "wallet")}
                   >
                     Refresh
                   </Button>
@@ -925,7 +1016,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
 
               {depositsError && <InfoBanner kind="danger">{depositsError}</InfoBanner>}
 
-              {!depositsError && deposits.length === 0 && !depositsLoading && (
+              {!depositsError && walletRequests.length === 0 && !depositsLoading && (
                 <p className="py-8 text-center text-sm text-slate-500">
                   {depositFilter === "pending"
                     ? "Nothing waiting for approval."
@@ -934,7 +1025,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
               )}
 
               <div className="space-y-2">
-                {deposits.map((d) => (
+                {walletRequests.map((d) => (
                   <div
                     key={d.id}
                     className={`rounded-lg border p-3 ${
@@ -1313,6 +1404,268 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         )}
 
         {/* ============ USERS ============ */}
+        {/* ============ PAYWALL ============ */}
+        {tab === "paywall" && (
+          <>
+            {!payment && (
+              <Card>
+                <div className="flex items-center gap-3 py-6">
+                  <Spinner /> <span className="text-sm text-slate-500">Loading…</span>
+                </div>
+              </Card>
+            )}
+
+            {payment && (
+              <>
+                {/* ---- The master switch ---- */}
+                <Card>
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Lock the New Order page
+                      </h2>
+                      <p className="mt-1 max-w-xl text-sm text-slate-500">
+                        When this is ON, a signed-in user can still browse the Dashboard,
+                        Orders and Wallet, but the New Order page shows a paywall until
+                        they pay once. The unlock is for life. Turning it OFF instantly
+                        opens the page to everyone again — nobody loses an unlock they
+                        already bought.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={savingPaywall}
+                      onClick={() => savePaywall({ paywallEnabled: !payment.paywallEnabled })}
+                      className={`relative h-8 w-14 shrink-0 rounded-full transition disabled:opacity-50 ${
+                        payment.paywallEnabled ? "bg-emerald-500" : "bg-slate-300"
+                      }`}
+                      aria-label="Toggle the New Order paywall"
+                    >
+                      <span
+                        className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all ${
+                          payment.paywallEnabled ? "left-7" : "left-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="mt-4">
+                    <InfoBanner kind={payment.paywallEnabled ? "warning" : "success"}>
+                      {payment.paywallEnabled ? (
+                        <>
+                          <strong>Paywall is ON.</strong> New users must pay ₹
+                          {payment.paywallPrice.toLocaleString("en-IN")} once before they can
+                          create an order. Owner accounts are never charged.
+                        </>
+                      ) : (
+                        <>
+                          <strong>Paywall is OFF.</strong> Every signed-in user can create
+                          orders right away.
+                        </>
+                      )}
+                    </InfoBanner>
+                  </div>
+                </Card>
+
+                {/* ---- Price & wording ---- */}
+                <Card>
+                  <div className="mb-4">
+                    <h2 className="text-base font-semibold text-slate-900">
+                      Price &amp; wording
+                    </h2>
+                    <p className="mt-0.5 text-sm text-slate-500">
+                      Users pay this using the same UPI / crypto details as a wallet
+                      top-up — set those up on the Payments tab.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        Unlock price (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={payment.paywallPrice}
+                        onChange={(e) => patchPayment({ paywallPrice: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[199, 299, 499, 999, 1999].map((q) => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => patchPayment({ paywallPrice: q })}
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                              payment.paywallPrice === q
+                                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                                : "border-slate-200 text-slate-600 hover:border-slate-300"
+                            }`}
+                          >
+                            ₹{q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        Headline
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={80}
+                        value={payment.paywallTitle}
+                        onChange={(e) => patchPayment({ paywallTitle: e.target.value })}
+                        placeholder="Unlock New Order"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Description shown to the user
+                    </label>
+                    <textarea
+                      rows={2}
+                      maxLength={400}
+                      value={payment.paywallBlurb}
+                      onChange={(e) => patchPayment({ paywallBlurb: e.target.value })}
+                      placeholder="One-time payment. Unlocks the New Order page on this account for life."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-3">
+                    <Button
+                      variant="primary"
+                      loading={savingPaywall}
+                      onClick={() => savePaywall({})}
+                    >
+                      Save paywall settings
+                    </Button>
+                    <span className="text-xs text-slate-500">
+                      Takes effect immediately for every user.
+                    </span>
+                  </div>
+                </Card>
+
+                {/* ---- Unlock payment queue ---- */}
+                <Card>
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Unlock requests
+                        {pendingAccessCount > 0 && (
+                          <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">
+                            {pendingAccessCount} pending
+                          </span>
+                        )}
+                      </h2>
+                      <p className="mt-0.5 text-sm text-slate-500">
+                        Confirm the money arrived, then approve. Approving unlocks the New
+                        Order page for that account — it does <strong>not</strong> add to
+                        their wallet.
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={depositsLoading}
+                      onClick={() => loadDeposits(password, depositFilter, "access")}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+
+                  {depositsError && <InfoBanner kind="danger">{depositsError}</InfoBanner>}
+
+                  {!depositsError &&
+                    accessRequests.length === 0 &&
+                    !depositsLoading && (
+                      <p className="py-8 text-center text-sm text-slate-500">
+                        Nothing waiting for approval.
+                      </p>
+                    )}
+
+                  <div className="space-y-2">
+                    {accessRequests.map((d) => (
+                      <div
+                        key={d.id}
+                        className={`rounded-lg border p-3 ${
+                          d.status === "pending"
+                            ? "border-amber-300 bg-amber-50/50"
+                            : "border-slate-200"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-lg font-extrabold tabular-nums text-slate-900">
+                                ₹{d.amount.toFixed(2)}
+                              </span>
+                              <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-indigo-700">
+                                unlock
+                              </span>
+                              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                                {d.method}
+                              </span>
+                              <StatusPill
+                                kind={
+                                  d.status === "approved"
+                                    ? "active"
+                                    : d.status === "rejected"
+                                    ? "danger"
+                                    : "warning"
+                                }
+                              >
+                                {d.status}
+                              </StatusPill>
+                            </div>
+                            <p className="mt-1 text-sm font-medium text-slate-700">
+                              {d.userEmail}
+                            </p>
+                            <p className="mt-0.5 break-all font-mono text-xs text-slate-500">
+                              {d.method === "upi" ? "UTR: " : "TX: "}
+                              {d.reference}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              {d.createdAt ? new Date(d.createdAt).toLocaleString() : "—"}
+                            </p>
+                          </div>
+
+                          {d.status === "pending" && (
+                            <div className="flex gap-2">
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                loading={reviewingId === d.id}
+                                onClick={() => handleReview(d, "approve")}
+                              >
+                                Approve &amp; unlock
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={reviewingId === d.id}
+                                onClick={() => handleReview(d, "reject")}
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </>
+            )}
+          </>
+        )}
+
         {tab === "users" && (
           <Card>
             <div className="mb-4 flex items-start justify-between gap-3">
@@ -1391,7 +1744,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id} className="border-b border-slate-100 last:border-0">
-                        <td className="py-2.5 pr-3 font-medium text-slate-900">
+                        <td className="max-w-52 truncate py-2.5 pr-3 font-medium text-slate-900" title={u.email}>
                           {u.email}
                           {u.isOwner && (
                             <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">
@@ -1408,20 +1761,62 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                           {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "—"}
                         </td>
                         <td className="py-2.5 pr-3">
-                          <StatusPill kind={u.isActive ? "active" : "danger"}>
-                            {u.isActive ? "Active" : "Disabled"}
-                          </StatusPill>
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusPill kind={u.isActive ? "active" : "danger"}>
+                              {u.isActive ? "Active" : "Disabled"}
+                            </StatusPill>
+                            {/* New Order access, shown only when it can differ. */}
+                            <span
+                              title={
+                                u.isOwner
+                                  ? "Owner — New Order is always available"
+                                  : u.hasOrderAccess
+                                  ? "New Order page unlocked"
+                                  : "New Order page locked"
+                              }
+                              className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                                u.isOwner
+                                  ? "bg-amber-100 text-amber-700"
+                                  : u.hasOrderAccess
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}
+                            >
+                              {u.isOwner ? "🔓 always" : u.hasOrderAccess ? "🔓 order" : "🔒 order"}
+                            </span>
+                          </div>
                         </td>
-                        <td className="py-2.5 text-right whitespace-nowrap">
-                          <Button variant="ghost" size="sm" onClick={() => handleAdjustWallet(u)}>
-                            Wallet
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => toggleOwner(u)}>
-                            {u.isOwner ? "Un-owner" : "Make owner"}
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => toggleUser(u)}>
-                            {u.isActive ? "Disable" : "Enable"}
-                          </Button>
+                        <td className="py-2.5 pl-2">
+                          <div className="flex flex-nowrap items-center justify-end gap-0.5">
+                            <Button variant="ghost" size="sm" onClick={() => handleAdjustWallet(u)}>
+                              Wallet
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={u.isOwner ? "Remove owner status" : "Make this an owner account"}
+                              onClick={() => toggleOwner(u)}
+                            >
+                              {u.isOwner ? "Un-owner" : "Owner"}
+                            </Button>
+                            {!u.isOwner && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title={
+                                  u.hasOrderAccess
+                                    ? "Revoke New Order access"
+                                    : "Give free New Order access"
+                                }
+                                onClick={() => toggleOrderAccess(u)}
+                              >
+                                {u.hasOrderAccess ? "Lock" : "Unlock"}
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => toggleUser(u)}>
+                              {u.isActive ? "Disable" : "Enable"}
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))}
