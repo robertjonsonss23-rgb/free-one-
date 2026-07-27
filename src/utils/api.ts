@@ -758,6 +758,8 @@ export interface AuthUser {
   balance: number;
   /** Owner accounts self-fund and see commission figures. */
   isOwner: boolean;
+  /** True once this account has paid the one-time New Order paywall. */
+  hasOrderAccess: boolean;
   createdAt?: string;
 }
 
@@ -774,6 +776,7 @@ function normalizeUser(raw: unknown): AuthUser {
     name: String(o.name ?? ""),
     balance: Number(o.balance) || 0,
     isOwner: o.isOwner === true,
+    hasOrderAccess: o.hasOrderAccess === true,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
   };
 }
@@ -854,6 +857,8 @@ export interface AdminUser {
   name: string;
   isActive: boolean;
   isOwner: boolean;
+  /** True once this account has unlocked the New Order page. */
+  hasOrderAccess: boolean;
   balance: number;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -874,6 +879,7 @@ export async function fetchAdminUsers(password: string): Promise<AdminUser[]> {
       name: String(o.name ?? ""),
       isActive: o.isActive !== false,
       isOwner: o.isOwner === true,
+      hasOrderAccess: o.hasOrderAccess === true,
       balance: Number(o.balance) || 0,
       createdAt: typeof o.createdAt === "string" ? o.createdAt : null,
       lastLoginAt: typeof o.lastLoginAt === "string" ? o.lastLoginAt : null,
@@ -1196,6 +1202,8 @@ export interface AdminDeposit {
   userId: string;
   userEmail: string;
   amount: number;
+  /** 'wallet' = top-up, 'access' = New Order paywall unlock. */
+  purpose: "wallet" | "access";
   method: "upi" | "crypto";
   methodId: string;
   reference: string;
@@ -1232,21 +1240,28 @@ export interface AdminPaymentSettings {
   cryptoEnabled: boolean;
   upiMethods: AdminUpiMethod[];
   cryptoMethods: AdminCryptoMethod[];
+  /* ---- New Order paywall ---- */
+  paywallEnabled: boolean;
+  paywallPrice: number;
+  paywallTitle: string;
+  paywallBlurb: string;
   updatedAt: string | null;
 }
 
 export async function fetchAdminDeposits(
   password: string,
-  status: "pending" | "all" = "pending"
-): Promise<{ pendingCount: number; deposits: AdminDeposit[] }> {
+  status: "pending" | "all" = "pending",
+  purpose: "wallet" | "access" | "all" = "all"
+): Promise<{ pendingCount: number; pendingAccessCount: number; deposits: AdminDeposit[] }> {
   const response = await fetch(
-    `${BACKEND_BASE_URL}/api/admin/deposits?status=${status}`,
+    `${BACKEND_BASE_URL}/api/admin/deposits?status=${status}&purpose=${purpose}`,
     { headers: { "x-admin-password": password } }
   );
   const payload = await parseOrThrow(response);
   const rows = Array.isArray(payload.deposits) ? payload.deposits : [];
   return {
     pendingCount: Number(payload.pendingCount) || 0,
+    pendingAccessCount: Number(payload.pendingAccessCount) || 0,
     deposits: rows.map((d) => {
       const o = d as Record<string, unknown>;
       return {
@@ -1254,6 +1269,7 @@ export async function fetchAdminDeposits(
         userId: String(o.userId ?? ""),
         userEmail: String(o.userEmail ?? ""),
         amount: Number(o.amount) || 0,
+        purpose: (o.purpose === "access" ? "access" : "wallet") as "wallet" | "access",
         method: String(o.method ?? "upi") as "upi" | "crypto",
         methodId: String(o.methodId ?? ""),
         reference: String(o.reference ?? ""),
@@ -1338,6 +1354,10 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         isActive: o.isActive !== false,
       };
     }),
+    paywallEnabled: Boolean(payload.paywallEnabled),
+    paywallPrice: Number(payload.paywallPrice) || 0,
+    paywallTitle: String(payload.paywallTitle || "Unlock New Order"),
+    paywallBlurb: String(payload.paywallBlurb || ""),
     updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
   };
 }
@@ -1351,6 +1371,10 @@ export async function savePaymentSettings(
     cryptoEnabled: boolean;
     upiMethods: AdminUpiMethod[];
     cryptoMethods: AdminCryptoMethod[];
+    paywallEnabled: boolean;
+    paywallPrice: number;
+    paywallTitle: string;
+    paywallBlurb: string;
   }>
 ): Promise<void> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/admin/payment-settings`, {
@@ -1398,6 +1422,144 @@ export async function setUserOwner(
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
     body: JSON.stringify({ isOwner }),
+  });
+  await parseOrThrow(response);
+}
+
+
+/* ============================================================
+   NEW ORDER PAYWALL
+   One-time, lifetime unlock of the New Order page. The admin can
+   switch the whole thing off, in which case `allowed` is always true.
+   ============================================================ */
+
+export interface OrderAccessPending {
+  id: string;
+  amount: number;
+  method: "upi" | "crypto";
+  reference: string;
+  createdAt: string;
+}
+
+export interface OrderAccessStatus {
+  /** Is the paywall switched on at all? */
+  paywallEnabled: boolean;
+  /** Can this user open New Order right now? */
+  allowed: boolean;
+  /** Did they pay (or get granted) the unlock? */
+  unlocked: boolean;
+  isOwner: boolean;
+  price: number;
+  title: string;
+  blurb: string;
+  /** Wallet balance in rupees, so the page can offer "pay from wallet". */
+  balance: number;
+  payment: PaymentMethods;
+  pending: OrderAccessPending | null;
+}
+
+function emptyPaymentMethods(): PaymentMethods {
+  return {
+    minDeposit: 0,
+    upiEnabled: false,
+    cryptoEnabled: false,
+    upiMethods: [],
+    cryptoMethods: [],
+  };
+}
+
+function normalizePaymentBlock(raw: unknown): PaymentMethods {
+  const o = (raw || {}) as Record<string, unknown>;
+  return {
+    minDeposit: Number(o.minDeposit) || 0,
+    upiEnabled: Boolean(o.upiEnabled),
+    cryptoEnabled: Boolean(o.cryptoEnabled),
+    upiMethods: (Array.isArray(o.upiMethods) ? o.upiMethods : []).map((m) => {
+      const x = m as Record<string, unknown>;
+      return {
+        id: String(x.id ?? ""),
+        label: String(x.label ?? ""),
+        upiId: String(x.upiId ?? ""),
+        payeeName: String(x.payeeName ?? ""),
+        instructions: String(x.instructions ?? ""),
+        qrImage: String(x.qrImage ?? ""),
+      };
+    }),
+    cryptoMethods: (Array.isArray(o.cryptoMethods) ? o.cryptoMethods : []).map((m) => {
+      const x = m as Record<string, unknown>;
+      return {
+        id: String(x.id ?? ""),
+        label: String(x.label ?? ""),
+        network: String(x.network ?? ""),
+        address: String(x.address ?? ""),
+        instructions: String(x.instructions ?? ""),
+        qrImage: String(x.qrImage ?? ""),
+      };
+    }),
+  };
+}
+
+export async function fetchOrderAccess(): Promise<OrderAccessStatus> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/order-access`, { method: "GET" });
+  const payload = await parseOrThrow(response);
+  const pendingRaw = payload.pending as Record<string, unknown> | null | undefined;
+  return {
+    paywallEnabled: Boolean(payload.paywallEnabled),
+    allowed: Boolean(payload.allowed),
+    unlocked: Boolean(payload.unlocked),
+    isOwner: Boolean(payload.isOwner),
+    price: Number(payload.price) || 0,
+    title: String(payload.title || "Unlock New Order"),
+    blurb: String(payload.blurb || ""),
+    balance: Number(payload.balance) || 0,
+    payment: payload.payment ? normalizePaymentBlock(payload.payment) : emptyPaymentMethods(),
+    pending: pendingRaw
+      ? {
+          id: String(pendingRaw.id ?? ""),
+          amount: Number(pendingRaw.amount) || 0,
+          method: String(pendingRaw.method ?? "upi") as "upi" | "crypto",
+          reference: String(pendingRaw.reference ?? ""),
+          createdAt: String(pendingRaw.createdAt ?? ""),
+        }
+      : null,
+  };
+}
+
+/** Submit a UPI / crypto payment for the unlock. Needs admin approval. */
+export async function purchaseOrderAccess(payload: {
+  method: "upi" | "crypto";
+  methodId: string;
+  reference: string;
+}): Promise<{ message: string }> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/order-access/purchase`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const result = await parseOrThrow(response);
+  return { message: String(result.message || "Submitted for verification.") };
+}
+
+/** Unlock instantly by spending existing wallet balance. */
+export async function unlockOrderAccessFromWallet(): Promise<{ balance: number }> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/order-access/pay-from-wallet`, {
+    method: "POST",
+  });
+  const result = await parseOrThrow(response);
+  return { balance: Number(result.balance) || 0 };
+}
+
+/* ---- Admin: paywall switch ---- */
+
+/** Admin: grant or revoke the New Order unlock on an account. */
+export async function setUserOrderAccess(
+  password: string,
+  userId: string,
+  hasOrderAccess: boolean
+): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/users/${userId}/order-access`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ hasOrderAccess }),
   });
   await parseOrThrow(response);
 }
