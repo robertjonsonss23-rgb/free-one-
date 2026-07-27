@@ -994,3 +994,12 @@ html.theme-ready body {
 /* Sticky deploy bar: give it real separation from the page. */
 .dark .shadow-2xl { --tw-shadow-color: rgb(0 0 0 / 0.6); }
 
+
+/* ---- Payment QR codes must stay scannable in dark mode ----
+   `bg-white` compiles to var(--color-white), which .dark remaps to a near-black
+   panel colour. A QR with a transparent background would then be unreadable by
+   a phone camera, so force a real white plate behind every payment QR. */
+.dark img[alt="Payment QR code"] {
+  background-color: #ffffff;
+  border-color: rgb(255 255 255 / 0.25);
+}
