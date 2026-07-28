@@ -1003,3 +1003,14 @@ html.theme-ready body {
   background-color: #ffffff;
   border-color: rgb(255 255 255 / 0.25);
 }
+
+/* ---- "Send exactly <amount>" strip ----
+   This is the single most important number on a payment screen, so it must
+   never depend on the theme. Tailwind's slate/white utilities are remapped by
+   .dark (bg-slate-900 becomes near-white, text-white becomes near-black), which
+   rendered the amount white-on-white. Literal colours here, both themes. */
+.pay-amount-strip { background-color: #0f172a; }
+.pay-amount-value { color: #ffffff; }
+.pay-amount-label { color: #94a3b8; }
+.pay-amount-note  { color: #cbd5e1; }
+.dark .pay-amount-strip { background-color: #050912; }
