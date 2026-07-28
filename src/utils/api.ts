@@ -1074,6 +1074,8 @@ export interface WalletTransaction {
 export interface DepositRecord {
   id: string;
   amount: number;
+  crypto: string;
+  coin: string;
   method: "upi" | "crypto";
   reference: string;
   status: "pending" | "approved" | "rejected";
@@ -1104,6 +1106,16 @@ export interface CryptoMethod {
   address: string;
   instructions: string;
   qrImage: string;
+  /** Ticker shown beside amounts, e.g. "USDT". */
+  coin: string;
+}
+
+export interface CryptoPack {
+  id: string;
+  /** Rupees credited to the wallet. */
+  amount: number;
+  /** Exact crypto amount to send, pre-formatted (e.g. "11.5"). */
+  crypto: string;
 }
 
 export interface PaymentMethods {
@@ -1112,6 +1124,8 @@ export interface PaymentMethods {
   cryptoEnabled: boolean;
   upiMethods: UpiMethod[];
   cryptoMethods: CryptoMethod[];
+  /** Fixed rupee/crypto pairs a crypto buyer chooses from. */
+  cryptoPacks: CryptoPack[];
 }
 
 export async function fetchWallet(): Promise<WalletData> {
@@ -1136,6 +1150,8 @@ export async function fetchWallet(): Promise<WalletData> {
       return {
         id: String(o.id ?? ""),
         amount: Number(o.amount) || 0,
+        crypto: String(o.crypto ?? ""),
+        coin: String(o.coin ?? ""),
         method: (String(o.method ?? "upi") as "upi" | "crypto"),
         reference: String(o.reference ?? ""),
         status: String(o.status ?? "pending") as DepositRecord["status"],
@@ -1174,16 +1190,28 @@ export async function fetchPaymentMethods(): Promise<PaymentMethods> {
         address: String(o.address ?? ""),
         instructions: String(o.instructions ?? ""),
         qrImage: String(o.qrImage ?? ""),
+        coin: String(o.coin ?? "USDT"),
+      };
+    }),
+    cryptoPacks: (Array.isArray(payload.cryptoPacks) ? payload.cryptoPacks : []).map((p) => {
+      const o = p as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        amount: Number(o.amount) || 0,
+        crypto: String(o.crypto ?? ""),
       };
     }),
   };
 }
 
 export async function submitDeposit(payload: {
-  amount: number;
+  /** Rupees — used for UPI only; crypto amounts come from the chosen pack. */
+  amount?: number;
   method: "upi" | "crypto";
   methodId: string;
   reference: string;
+  /** Required for crypto: which fixed rupee/crypto pack they bought. */
+  packId?: string;
 }): Promise<{ message: string }> {
   const response = await authedFetch(`${BACKEND_BASE_URL}/api/wallet/deposit`, {
     method: "POST",
@@ -1202,6 +1230,9 @@ export interface AdminDeposit {
   userId: string;
   userEmail: string;
   amount: number;
+  /** Crypto amount actually quoted, if paid that way. */
+  crypto: string;
+  coin: string;
   /** 'wallet' = top-up, 'access' = New Order paywall unlock. */
   purpose: "wallet" | "access";
   method: "upi" | "crypto";
@@ -1231,6 +1262,14 @@ export interface AdminCryptoMethod {
   instructions: string;
   qrImage: string;
   isActive: boolean;
+  coin: string;
+}
+
+export interface AdminCryptoPack {
+  id: string;
+  amount: number;
+  crypto: string;
+  isActive: boolean;
 }
 
 export interface AdminPaymentSettings {
@@ -1240,9 +1279,12 @@ export interface AdminPaymentSettings {
   cryptoEnabled: boolean;
   upiMethods: AdminUpiMethod[];
   cryptoMethods: AdminCryptoMethod[];
+  cryptoPacks: AdminCryptoPack[];
   /* ---- New Order paywall ---- */
   paywallEnabled: boolean;
   paywallPrice: number;
+  /** Blank string = crypto unlock not offered. */
+  paywallCryptoPrice: string;
   paywallTitle: string;
   paywallBlurb: string;
   updatedAt: string | null;
@@ -1269,6 +1311,8 @@ export async function fetchAdminDeposits(
         userId: String(o.userId ?? ""),
         userEmail: String(o.userEmail ?? ""),
         amount: Number(o.amount) || 0,
+        crypto: String(o.crypto ?? ""),
+        coin: String(o.coin ?? ""),
         purpose: (o.purpose === "access" ? "access" : "wallet") as "wallet" | "access",
         method: String(o.method ?? "upi") as "upi" | "crypto",
         methodId: String(o.methodId ?? ""),
@@ -1352,10 +1396,21 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         instructions: String(o.instructions ?? ""),
         qrImage: String(o.qrImage ?? ""),
         isActive: o.isActive !== false,
+        coin: String(o.coin ?? "USDT"),
+      };
+    }),
+    cryptoPacks: (Array.isArray(payload.cryptoPacks) ? payload.cryptoPacks : []).map((p) => {
+      const o = p as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        amount: Number(o.amount) || 0,
+        crypto: String(o.crypto ?? ""),
+        isActive: o.isActive !== false,
       };
     }),
     paywallEnabled: Boolean(payload.paywallEnabled),
     paywallPrice: Number(payload.paywallPrice) || 0,
+    paywallCryptoPrice: String(payload.paywallCryptoPrice || ""),
     paywallTitle: String(payload.paywallTitle || "Unlock New Order"),
     paywallBlurb: String(payload.paywallBlurb || ""),
     updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
@@ -1371,8 +1426,10 @@ export async function savePaymentSettings(
     cryptoEnabled: boolean;
     upiMethods: AdminUpiMethod[];
     cryptoMethods: AdminCryptoMethod[];
+    cryptoPacks: AdminCryptoPack[];
     paywallEnabled: boolean;
     paywallPrice: number;
+    paywallCryptoPrice: string;
     paywallTitle: string;
     paywallBlurb: string;
   }>
@@ -1436,6 +1493,9 @@ export async function setUserOwner(
 export interface OrderAccessPending {
   id: string;
   amount: number;
+  /** What they were told to send in crypto, if they paid that way. */
+  crypto: string;
+  coin: string;
   method: "upi" | "crypto";
   reference: string;
   createdAt: string;
@@ -1450,6 +1510,8 @@ export interface OrderAccessStatus {
   unlocked: boolean;
   isOwner: boolean;
   price: number;
+  /** Exact crypto amount for the unlock; "" when the admin hasn't set one. */
+  cryptoPrice: string;
   title: string;
   blurb: string;
   /** Wallet balance in rupees, so the page can offer "pay from wallet". */
@@ -1465,6 +1527,7 @@ function emptyPaymentMethods(): PaymentMethods {
     cryptoEnabled: false,
     upiMethods: [],
     cryptoMethods: [],
+    cryptoPacks: [],
   };
 }
 
@@ -1494,6 +1557,15 @@ function normalizePaymentBlock(raw: unknown): PaymentMethods {
         address: String(x.address ?? ""),
         instructions: String(x.instructions ?? ""),
         qrImage: String(x.qrImage ?? ""),
+        coin: String(x.coin ?? "USDT"),
+      };
+    }),
+    cryptoPacks: (Array.isArray(o.cryptoPacks) ? o.cryptoPacks : []).map((p) => {
+      const x = p as Record<string, unknown>;
+      return {
+        id: String(x.id ?? ""),
+        amount: Number(x.amount) || 0,
+        crypto: String(x.crypto ?? ""),
       };
     }),
   };
@@ -1509,6 +1581,7 @@ export async function fetchOrderAccess(): Promise<OrderAccessStatus> {
     unlocked: Boolean(payload.unlocked),
     isOwner: Boolean(payload.isOwner),
     price: Number(payload.price) || 0,
+    cryptoPrice: String(payload.cryptoPrice || ""),
     title: String(payload.title || "Unlock New Order"),
     blurb: String(payload.blurb || ""),
     balance: Number(payload.balance) || 0,
@@ -1517,6 +1590,8 @@ export async function fetchOrderAccess(): Promise<OrderAccessStatus> {
       ? {
           id: String(pendingRaw.id ?? ""),
           amount: Number(pendingRaw.amount) || 0,
+          crypto: String(pendingRaw.crypto ?? ""),
+          coin: String(pendingRaw.coin ?? ""),
           method: String(pendingRaw.method ?? "upi") as "upi" | "crypto",
           reference: String(pendingRaw.reference ?? ""),
           createdAt: String(pendingRaw.createdAt ?? ""),
