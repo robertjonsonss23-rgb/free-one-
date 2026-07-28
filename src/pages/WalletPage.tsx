@@ -12,7 +12,7 @@ import {
 
 interface WalletPageProps {
   onBalanceChange?: (balance: number) => void;
-  /** Owner accounts can fund themselves without a real payment. */ 
+  /** Owner accounts can fund themselves without a real payment. */
   isOwner?: boolean;
 }
 
@@ -53,6 +53,8 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
   const [formError, setFormError] = useState("");
   const [success, setSuccess] = useState("");
   const [copied, setCopied] = useState("");
+  // Which fixed rupee/crypto pack a crypto buyer selected.
+  const [packId, setPackId] = useState("");
   const [ownerAmount, setOwnerAmount] = useState("");
   const [ownerBusy, setOwnerBusy] = useState(false);
 
@@ -64,9 +66,12 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
       setMethods(m);
       onBalanceChange?.(w.balance);
       if (!methodId) {
-        const first = m.upiEnabled ? m.upiMethods[0]?.id : m.cryptoMethods[0]?.id;
+        const canCrypto = m.cryptoMethods.length > 0 && m.cryptoPacks.length > 0;
+        const first = m.upiEnabled
+          ? m.upiMethods[0]?.id
+          : canCrypto ? m.cryptoMethods[0]?.id : "";
         if (first) setMethodId(first);
-        if (!m.upiEnabled && m.cryptoEnabled) setKind("crypto");
+        if (!m.upiEnabled && canCrypto) setKind("crypto");
       }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load your wallet.");
@@ -78,8 +83,21 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
 
   useEffect(() => { load(); }, [load]);
 
-  const activeMethods = kind === "upi" ? (methods?.upiMethods ?? []) : (methods?.cryptoMethods ?? []);
+  const packs = methods?.cryptoPacks ?? [];
+  /* Crypto has no exchange rate, so it is only usable once the admin has
+     published at least one fixed rupee/crypto pack. */
+  const cryptoUsable = (methods?.cryptoMethods.length ?? 0) > 0 && packs.length > 0;
+  const effectiveKind: "upi" | "crypto" = kind === "crypto" && !cryptoUsable ? "upi" : kind;
+  const activeMethods =
+    effectiveKind === "upi" ? (methods?.upiMethods ?? []) : (methods?.cryptoMethods ?? []);
   const selected = activeMethods.find((m) => m.id === methodId) ?? activeMethods[0];
+  const coin = (selected as { coin?: string } | undefined)?.coin || "USDT";
+  const selectedPack = packs.find((p) => p.id === packId) ?? null;
+  /** Exactly what the user must send, in whichever currency they picked. */
+  const amountToSend =
+    effectiveKind === "crypto"
+      ? selectedPack ? `${selectedPack.crypto} ${coin}` : ""
+      : amount ? formatMoney(Number(amount) || 0) : "";
 
   const copy = async (text: string, tag: string) => {
     try {
@@ -93,23 +111,35 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
     e.preventDefault();
     setFormError("");
 
-    const value = Number(amount);
-    const min = methods?.minDeposit ?? 50;
-    if (!Number.isFinite(value) || value <= 0) {
-      setFormError("Enter the amount you paid.");
-      return;
-    }
-    if (value < min) {
-      setFormError(`Minimum deposit is ${formatMoney(min)}.`);
-      return;
-    }
     if (!selected) {
       setFormError("No payment method available. Contact the administrator.");
       return;
     }
+
+    /* UPI takes a typed rupee amount; crypto takes one of the admin's packs,
+       because without a rate an arbitrary amount can't be converted. */
+    let value = 0;
+    if (effectiveKind === "crypto") {
+      if (!selectedPack) {
+        setFormError("Choose how much you want to add.");
+        return;
+      }
+    } else {
+      value = Number(amount);
+      const min = methods?.minDeposit ?? 50;
+      if (!Number.isFinite(value) || value <= 0) {
+        setFormError("Enter the amount you paid.");
+        return;
+      }
+      if (value < min) {
+        setFormError(`Minimum deposit is ${formatMoney(min)}.`);
+        return;
+      }
+    }
+
     if (reference.trim().length < 6) {
       setFormError(
-        kind === "upi"
+        effectiveKind === "upi"
           ? "Enter the 12-digit UTR / reference number from your payment app."
           : "Enter the transaction hash."
       );
@@ -119,13 +149,16 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
     setSubmitting(true);
     try {
       const result = await submitDeposit({
-        amount: value,
-        method: kind,
+        ...(effectiveKind === "crypto"
+          ? { packId: selectedPack!.id }
+          : { amount: value }),
+        method: effectiveKind,
         methodId: selected.id,
         reference: reference.trim(),
       });
       setSuccess(result.message);
       setAmount("");
+      setPackId("");
       setReference("");
       setShowAdd(false);
       await load();
@@ -148,9 +181,11 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
   }
 
   const pendingDeposits = wallet?.deposits.filter((d) => d.status === "pending") ?? [];
+  /* Nothing to show if UPI is off/unconfigured AND crypto isn't usable
+     (crypto needs both an address and at least one published pack). */
   const noMethods =
     (!methods?.upiEnabled || methods.upiMethods.length === 0) &&
-    (!methods?.cryptoEnabled || methods.cryptoMethods.length === 0);
+    (!methods?.cryptoEnabled || !cryptoUsable);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 space-y-5 sm:px-6">
@@ -263,12 +298,12 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                   <h2 className="text-base font-semibold text-slate-900">Add money</h2>
                   <p className="mt-0.5 text-sm text-slate-500">
                     Pay using the details below, then enter the reference number so we can verify it.
-                    Minimum {formatMoney(methods?.minDeposit ?? 50)}.
+                    {effectiveKind === "upi" && ` Minimum ${formatMoney(methods?.minDeposit ?? 50)}.`}
                   </p>
                 </div>
 
                 {/* method type */}
-                {methods?.upiEnabled && methods?.cryptoEnabled && (
+                {methods?.upiEnabled && cryptoUsable && (
                   <div className="mb-4 grid max-w-xs grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                     {(["upi", "crypto"] as const).map((k) => (
                       <button
@@ -280,7 +315,9 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                           setMethodId(list[0]?.id ?? "");
                         }}
                         className={`rounded-md px-3 py-1.5 text-sm font-semibold uppercase transition ${
-                          kind === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                          effectiveKind === k
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500"
                         }`}
                       >
                         {k}
@@ -318,11 +355,11 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                           className="h-52 w-52 rounded-xl border border-slate-200 bg-white object-contain p-2 shadow-sm"
                         />
                         <p className="mt-2 text-[11px] font-semibold text-slate-600">
-                          Scan with any {kind === "upi" ? "UPI" : "crypto"} app
+                          Scan with any {effectiveKind === "upi" ? "UPI" : "crypto"} app
                         </p>
                       </div>
                     )}
-                    {kind === "upi" ? (
+                    {effectiveKind === "upi" ? (
                       <>
                         <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">
                           Send payment to this UPI ID
@@ -376,43 +413,101 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                      Amount paid
-                    </label>
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {QUICK_AMOUNTS.map((q) => (
-                        <button
-                          key={q}
-                          type="button"
-                          onClick={() => setAmount(String(q))}
-                          className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
-                            amount === String(q)
-                              ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                              : "border-slate-200 text-slate-600 hover:border-slate-300"
-                          }`}
-                        >
-                          ₹{q}
-                        </button>
-                      ))}
+                  {effectiveKind === "crypto" ? (
+                    /* No exchange rate exists, so the user picks a fixed
+                       rupee/crypto pair the admin has published. */
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        How much do you want to add?
+                      </label>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {packs.map((p) => {
+                          const active = packId === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => { setPackId(p.id); setFormError(""); }}
+                              className={`flex items-center justify-between rounded-xl border-2 px-3 py-2.5 text-left transition ${
+                                active
+                                  ? "border-indigo-500 bg-indigo-50"
+                                  : "border-slate-200 hover:border-slate-300"
+                              }`}
+                            >
+                              <span className="text-sm font-bold text-slate-900">
+                                {formatMoney(p.amount)}
+                              </span>
+                              <span
+                                className={`font-mono text-sm font-bold ${
+                                  active ? "text-indigo-700" : "text-slate-500"
+                                }`}
+                              >
+                                {p.crypto} {coin}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-1.5 text-xs text-slate-500">
+                        Left is what lands in your wallet; right is what you send.
+                      </p>
                     </div>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={amount}
-                      onChange={(e) => { setAmount(e.target.value); setFormError(""); }}
-                      placeholder={`Minimum ${methods?.minDeposit ?? 50}`}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
+                  ) : (
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        Amount paid
+                      </label>
+                      <div className="mb-2 flex flex-wrap gap-1.5">
+                        {QUICK_AMOUNTS.map((q) => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => setAmount(String(q))}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                              amount === String(q)
+                                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                                : "border-slate-200 text-slate-600 hover:border-slate-300"
+                            }`}
+                          >
+                            ₹{q}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={amount}
+                        onChange={(e) => { setAmount(e.target.value); setFormError(""); }}
+                        placeholder={`Minimum ${methods?.minDeposit ?? 50}`}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  )}
+
+                  {/* The exact figure to send, once a choice has been made. */}
+                  {amountToSend && (
+                    <div className="pay-amount-strip flex flex-wrap items-baseline gap-2 rounded-xl px-4 py-3">
+                      <span className="pay-amount-label text-[11px] font-bold uppercase tracking-wide">
+                        Send exactly
+                      </span>
+                      <span className="pay-amount-value text-xl font-extrabold">
+                        {amountToSend}
+                      </span>
+                      {effectiveKind === "crypto" && selectedPack && (
+                        <span className="pay-amount-note text-xs">
+                          (adds {formatMoney(selectedPack.amount)} to your wallet)
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   <Input
-                    label={kind === "upi" ? "UTR / Reference number" : "Transaction hash"}
+                    label={effectiveKind === "upi" ? "UTR / Reference number" : "Transaction hash"}
                     value={reference}
                     onChange={(e) => { setReference(e.target.value); setFormError(""); }}
-                    placeholder={kind === "upi" ? "e.g. 401234567890" : "0x…"}
+                    placeholder={effectiveKind === "upi" ? "e.g. 401234567890" : "0x…"}
                     hint={
-                      kind === "upi"
+                      effectiveKind === "upi"
                         ? "Find this in your UPI app under transaction details."
                         : "The transaction id from your wallet or explorer."
                     }
