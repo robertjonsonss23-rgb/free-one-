@@ -75,14 +75,17 @@ export function PaywallPage({
         return;
       }
 
+      const cryptoUsable = next.cryptoPrice !== "" && next.payment.cryptoMethods.length > 0;
       setMethodId((current) => {
         if (current) return current;
         const first = next.payment.upiEnabled
           ? next.payment.upiMethods[0]?.id
-          : next.payment.cryptoMethods[0]?.id;
+          : cryptoUsable
+          ? next.payment.cryptoMethods[0]?.id
+          : "";
         return first ?? "";
       });
-      if (!next.payment.upiEnabled && next.payment.cryptoEnabled) setKind("crypto");
+      if (!next.payment.upiEnabled && cryptoUsable) setKind("crypto");
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load unlock details.");
     } finally {
@@ -104,11 +107,21 @@ export function PaywallPage({
   }, [status?.pending, load]);
 
   const payment = status?.payment;
+  /* Crypto is only offered once the admin has set a crypto price — otherwise
+     there is no amount to ask the user for. */
+  const cryptoPrice = status?.cryptoPrice ?? "";
+  const cryptoOffered = cryptoPrice !== "" && (payment?.cryptoMethods.length ?? 0) > 0;
+  const effectiveKind: "upi" | "crypto" = kind === "crypto" && !cryptoOffered ? "upi" : kind;
   const activeMethods =
-    kind === "upi" ? (payment?.upiMethods ?? []) : (payment?.cryptoMethods ?? []);
+    effectiveKind === "upi" ? (payment?.upiMethods ?? []) : (payment?.cryptoMethods ?? []);
   const selected = activeMethods.find((m) => m.id === methodId) ?? activeMethods[0];
   const noMethods =
-    !payment || (payment.upiMethods.length === 0 && payment.cryptoMethods.length === 0);
+    !payment ||
+    (payment.upiMethods.length === 0 && !cryptoOffered);
+  const coin = (selected as { coin?: string } | undefined)?.coin || "USDT";
+  /** What the user must actually send, in the currency they picked. */
+  const amountToSend =
+    effectiveKind === "crypto" ? `${cryptoPrice} ${coin}` : formatMoney(status?.price ?? 0);
 
   const copy = async (text: string, tag: string) => {
     try {
@@ -130,7 +143,7 @@ export function PaywallPage({
     }
     if (reference.trim().length < 6) {
       setFormError(
-        kind === "upi"
+        effectiveKind === "upi"
           ? "Enter the 12-digit UTR / reference number from your payment app."
           : "Enter the transaction hash."
       );
@@ -140,7 +153,7 @@ export function PaywallPage({
     setSubmitting(true);
     try {
       const result = await purchaseOrderAccess({
-        method: kind,
+        method: effectiveKind,
         methodId: selected.id,
         reference: reference.trim(),
       });
@@ -244,8 +257,10 @@ export function PaywallPage({
           <InfoBanner kind="info">
             <strong>Payment submitted — waiting for verification.</strong>
             <br />
-            {formatMoney(status.pending.amount)} via{" "}
-            {status.pending.method.toUpperCase()} · reference{" "}
+            {status.pending.crypto
+              ? `${status.pending.crypto} ${status.pending.coin}`
+              : formatMoney(status.pending.amount)}{" "}
+            via {status.pending.method.toUpperCase()} · reference{" "}
             <code className="font-mono">{status.pending.reference}</code> · sent{" "}
             {formatDate(status.pending.createdAt)}.
             <br />
@@ -306,14 +321,14 @@ export function PaywallPage({
                   Or pay directly
                 </h2>
                 <p className="mt-0.5 text-sm text-slate-500">
-                  Send exactly <strong>{formatMoney(price)}</strong> using the details
-                  below, then enter the reference number so we can verify it. Access is
-                  granted after verification — usually within 5 minutes.
+                  Send exactly <strong>{amountToSend}</strong> using the details below,
+                  then enter the reference number so we can verify it. Access is granted
+                  after verification — usually within 5 minutes.
                 </p>
               </div>
 
               {/* method type */}
-              {payment?.upiEnabled && payment?.cryptoEnabled && (
+              {payment?.upiEnabled && cryptoOffered && (
                 <div className="mb-4 grid max-w-xs grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                   {(["upi", "crypto"] as const).map((k) => (
                     <button
@@ -326,7 +341,9 @@ export function PaywallPage({
                         setMethodId(list[0]?.id ?? "");
                       }}
                       className={`rounded-md px-3 py-1.5 text-sm font-semibold uppercase transition ${
-                        kind === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                        effectiveKind === k
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500"
                       }`}
                     >
                       {k}
@@ -334,6 +351,19 @@ export function PaywallPage({
                   ))}
                 </div>
               )}
+
+              {/* The exact figure to send, stated once and unmissably. */}
+              <div className="pay-amount-strip mb-4 flex flex-wrap items-baseline gap-2 rounded-xl px-4 py-3">
+                <span className="pay-amount-label text-[11px] font-bold uppercase tracking-wide">
+                  Send exactly
+                </span>
+                <span className="pay-amount-value text-xl font-extrabold">{amountToSend}</span>
+                {effectiveKind === "crypto" && (
+                  <span className="pay-amount-note text-xs">
+                    (covers the {formatMoney(price)} unlock)
+                  </span>
+                )}
+              </div>
 
               {activeMethods.length > 1 && (
                 <div className="mb-4">
@@ -365,11 +395,11 @@ export function PaywallPage({
                         className="h-52 w-52 rounded-xl border border-slate-200 bg-white object-contain p-2 shadow-sm"
                       />
                       <p className="mt-2 text-[11px] font-semibold text-slate-600">
-                        Scan with any {kind === "upi" ? "UPI" : "crypto"} app
+                        Scan with any {effectiveKind === "upi" ? "UPI" : "crypto"} app
                       </p>
                     </div>
                   )}
-                  {kind === "upi" ? (
+                  {effectiveKind === "upi" ? (
                     <>
                       <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">
                         Send payment to this UPI ID
@@ -428,14 +458,14 @@ export function PaywallPage({
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                    {kind === "upi" ? "UTR / reference number" : "Transaction hash"}
+                    {effectiveKind === "upi" ? "UTR / reference number" : "Transaction hash"}
                   </label>
                   <input
                     type="text"
                     value={reference}
                     onChange={(e) => setReference(e.target.value)}
                     placeholder={
-                      kind === "upi" ? "e.g. 402312345678" : "e.g. 0x9f2c…"
+                      effectiveKind === "upi" ? "e.g. 402312345678" : "e.g. 0x9f2c…"
                     }
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                   />
@@ -448,7 +478,7 @@ export function PaywallPage({
                 {success && <InfoBanner kind="success">{success}</InfoBanner>}
 
                 <Button type="submit" variant="primary" loading={submitting} fullWidth>
-                  I&apos;ve paid {formatMoney(price)} — submit for verification
+                  I&apos;ve paid {amountToSend} — submit for verification
                 </Button>
               </form>
             </>
