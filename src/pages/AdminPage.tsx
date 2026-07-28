@@ -10,7 +10,7 @@ import {
 } from "../components/ui";
 import type { ApiService } from "../types/order";
 import { ThemeToggle } from "../components/ThemeToggle";
-import type { Theme } from "../utils/theme"; 
+import type { Theme } from "../utils/theme";
 import {
   SERVICE_LABELS,
   fetchAdminPanelConfig,
@@ -37,6 +37,7 @@ import {
   type AdminPaymentSettings,
   type AdminUpiMethod,
   type AdminCryptoMethod,
+  type AdminCryptoPack,
   type AdminPanelConfig,
   type ServiceSlot,
   type ServiceLabel,
@@ -313,7 +314,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       note = prompt(`Why is this rejected? (shown to ${d.userEmail})`) || "";
     } else if (
       !confirm(
-        `${verb} ₹${d.amount.toFixed(2)} for ${d.userEmail}?\n\n` +
+        `${verb} ${d.crypto ? `${d.crypto} ${d.coin} (₹${d.amount.toFixed(2)})` : `₹${d.amount.toFixed(2)}`} for ${d.userEmail}?\n\n` +
           `${d.method === "upi" ? "UTR" : "TX"}: ${d.reference}\n\n` +
           (isAccess
             ? "This unlocks the New Order page on their account for life."
@@ -366,8 +367,10 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         cryptoEnabled: payment.cryptoEnabled,
         upiMethods: payment.upiMethods,
         cryptoMethods: payment.cryptoMethods,
+        cryptoPacks: payment.cryptoPacks,
         paywallEnabled: payment.paywallEnabled,
         paywallPrice: payment.paywallPrice,
+        paywallCryptoPrice: payment.paywallCryptoPrice,
         paywallTitle: payment.paywallTitle,
         paywallBlurb: payment.paywallBlurb,
       });
@@ -392,6 +395,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       await savePaymentSettings(password, {
         paywallEnabled: next.paywallEnabled,
         paywallPrice: next.paywallPrice,
+        paywallCryptoPrice: next.paywallCryptoPrice,
         paywallTitle: next.paywallTitle,
         paywallBlurb: next.paywallBlurb,
       });
@@ -431,7 +435,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     patchPayment({
       cryptoMethods: [
         ...(payment?.cryptoMethods ?? []),
-        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", qrImage: "", isActive: true },
+        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", qrImage: "", isActive: true, coin: "USDT" },
       ],
     });
 
@@ -490,6 +494,26 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const patchUpi = (i: number, patch: Partial<AdminUpiMethod>) =>
     patchPayment({
       upiMethods: (payment?.upiMethods ?? []).map((m, idx) => (idx === i ? { ...m, ...patch } : m)),
+    });
+
+  const addCryptoPack = () =>
+    patchPayment({
+      cryptoPacks: [
+        ...(payment?.cryptoPacks ?? []),
+        { id: `pack-${Date.now()}`, amount: 0, crypto: "", isActive: true },
+      ],
+    });
+
+  const patchPack = (i: number, patch: Partial<AdminCryptoPack>) =>
+    patchPayment({
+      cryptoPacks: (payment?.cryptoPacks ?? []).map((p, idx) =>
+        idx === i ? { ...p, ...patch } : p
+      ),
+    });
+
+  const removePack = (i: number) =>
+    patchPayment({
+      cryptoPacks: (payment?.cryptoPacks ?? []).filter((_, idx) => idx !== i),
     });
 
   const patchCrypto = (i: number, patch: Partial<AdminCryptoMethod>) =>
@@ -1040,6 +1064,12 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                           <span className="text-lg font-extrabold tabular-nums text-slate-900">
                             ₹{d.amount.toFixed(2)}
                           </span>
+                          {/* What actually left their wallet — verify against this. */}
+                          {d.crypto && (
+                            <span className="rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-violet-700">
+                              {d.crypto} {d.coin}
+                            </span>
+                          )}
                           <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-700">
                             {d.method}
                           </span>
@@ -1299,6 +1329,13 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                           placeholder="TRC20"
                         />
                         <Input
+                          label="Coin ticker"
+                          value={m.coin}
+                          onChange={(e) => patchCrypto(i, { coin: e.target.value.toUpperCase() })}
+                          placeholder="USDT"
+                          hint="Shown next to every crypto amount."
+                        />
+                        <Input
                           label="Wallet address"
                           value={m.address}
                           onChange={(e) => patchCrypto(i, { address: e.target.value })}
@@ -1386,6 +1423,76 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   <Button variant="ghost" size="sm" onClick={addCryptoMethod}>
                     + Add crypto address
                   </Button>
+                </div>
+
+                {/* ---- Fixed top-up amounts ----
+                    There is no exchange rate, so a crypto buyer must choose one
+                    of these pairs rather than typing a rupee figure. */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Crypto top-up amounts
+                  </h3>
+                  <p className="mt-0.5 mb-3 text-sm text-slate-500">
+                    Because there&apos;s no live exchange rate, you set each pair yourself.
+                    Left = what lands in their wallet, right = what they send you.
+                  </p>
+
+                  {payment.cryptoPacks.length === 0 && (
+                    <div className="mb-3">
+                      <InfoBanner kind="warning">
+                        No amounts set up, so <strong>crypto top-ups are hidden</strong> on
+                        the wallet page. Add at least one pair below.
+                      </InfoBanner>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {payment.cryptoPacks.map((pk, i) => (
+                      <div
+                        key={pk.id}
+                        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 p-3"
+                      >
+                        <div className="min-w-28 flex-1">
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Wallet gets (₹)
+                          </label>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            value={pk.amount || ""}
+                            onChange={(e) =>
+                              patchPack(i, { amount: Number(e.target.value) })
+                            }
+                            placeholder="500"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <span className="pb-2 text-slate-400">←</span>
+                        <div className="min-w-28 flex-1">
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            They send ({payment.cryptoMethods[0]?.coin || "USDT"})
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={pk.crypto}
+                            onChange={(e) => patchPack(i, { crypto: e.target.value })}
+                            placeholder="6"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
+                          />
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => removePack(i)}>
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3">
+                    <Button variant="ghost" size="sm" onClick={addCryptoPack}>
+                      + Add amount
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
@@ -1511,6 +1618,32 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
 
                     <div>
                       <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        Unlock price in crypto
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={payment.paywallCryptoPrice}
+                          onChange={(e) =>
+                            patchPayment({ paywallCryptoPrice: e.target.value })
+                          }
+                          placeholder="e.g. 5.67"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        />
+                        <span className="shrink-0 text-sm font-bold text-slate-500">
+                          {payment.cryptoMethods[0]?.coin || "USDT"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {payment.paywallCryptoPrice
+                          ? `Crypto buyers are asked for exactly ${payment.paywallCryptoPrice} ${payment.cryptoMethods[0]?.coin || "USDT"}.`
+                          : "Leave blank to hide crypto on the paywall — only UPI will be offered."}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
                         Headline
                       </label>
                       <input
@@ -1523,6 +1656,16 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                       />
                     </div>
                   </div>
+
+                  {payment.cryptoEnabled && !payment.paywallCryptoPrice && (
+                    <div className="mt-4">
+                      <InfoBanner kind="warning">
+                        Crypto is switched on for deposits, but the unlock has no crypto
+                        price — so the paywall will only show UPI. Set a figure above to
+                        accept crypto for unlocks.
+                      </InfoBanner>
+                    </div>
+                  )}
 
                   <div className="mt-4">
                     <label className="mb-1.5 block text-sm font-medium text-slate-700">
@@ -1606,6 +1749,11 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                               <span className="text-lg font-extrabold tabular-nums text-slate-900">
                                 ₹{d.amount.toFixed(2)}
                               </span>
+                              {d.crypto && (
+                                <span className="rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-violet-700">
+                                  {d.crypto} {d.coin}
+                                </span>
+                              )}
                               <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-indigo-700">
                                 unlock
                               </span>
