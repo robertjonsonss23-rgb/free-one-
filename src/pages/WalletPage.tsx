@@ -36,6 +36,7 @@ const TX_LABEL: Record<string, string> = {
   refund: "Refund",
   admin_credit: "Added by admin",
   admin_debit: "Removed by admin",
+  referral: "Referral bonus",
 };
 
 export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps) {
