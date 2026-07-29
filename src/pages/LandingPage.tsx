@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { login, signup, type AuthUser } from "../utils/api";
+import { login, signup, checkReferralCode, type AuthUser } from "../utils/api";
 
 interface LandingPageProps {
   onAuthenticated: (user: AuthUser) => void;
@@ -240,9 +240,13 @@ function AuthModal({
   onClose,
   onModeChange,
   onAuthenticated,
+  referralCode,
+  onReferralCodeChange,
 }: {
   open: boolean;
   mode: "login" | "signup";
+  referralCode: string;
+  onReferralCodeChange: (code: string) => void;
   onClose: () => void;
   onModeChange: (m: "login" | "signup") => void;
   onAuthenticated: (u: AuthUser) => void;
@@ -267,6 +271,24 @@ function AuthModal({
 
   const isSignup = mode === "signup";
 
+  /* Referral code lives in the parent so an invite link can open this modal
+     already in signup mode with the code filled in. */
+  const [refCheck, setRefCheck] = useState<{ valid: boolean; reward: number } | null>(null);
+
+  // Debounced so we don't hit the server on every keystroke.
+  useEffect(() => {
+    const code = referralCode.trim();
+    if (code.length < 4) { setRefCheck(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const result = await checkReferralCode(code);
+      if (!cancelled) {
+        setRefCheck(result.enabled ? { valid: result.valid, reward: result.refereeReward } : null);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [referralCode]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -280,7 +302,7 @@ function AuthModal({
     setLoading(true);
     try {
       const result = isSignup
-        ? await signup(mail, password, name.trim())
+        ? await signup(mail, password, name.trim(), referralCode.trim())
         : await login(mail, password);
       onAuthenticated(result.user);
     } catch (err) {
@@ -400,6 +422,29 @@ function AuthModal({
                     disabled={loading}
                   />
                 )}
+                {isSignup && (
+                  <div>
+                    <input
+                      className={`${field} font-mono uppercase tracking-widest`}
+                      placeholder="Referral code (optional)"
+                      value={referralCode}
+                      onChange={(e) => onReferralCodeChange(e.target.value.toUpperCase())}
+                      maxLength={12}
+                      disabled={loading}
+                    />
+                    {refCheck?.valid && (
+                      <p className="mt-1.5 text-xs font-semibold text-emerald-400">
+                        ✓ Code applied — you&apos;ll get ₹{refCheck.reward} after your
+                        first top-up.
+                      </p>
+                    )}
+                    {refCheck && !refCheck.valid && (
+                      <p className="mt-1.5 text-xs text-amber-400">
+                        That code isn&apos;t recognised. You can still sign up without it.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {error && (
                   <motion.p
@@ -466,9 +511,23 @@ const FAQS = [
 ];
 
 export function LandingPage({ onAuthenticated }: LandingPageProps) {
-  const [authOpen, setAuthOpen] = useState(false);
+  /* An invite link (/?ref=CODE) should land the visitor straight on the
+     signup form with the code already filled in — read synchronously so the
+     modal is never briefly shown in the wrong mode. */
+  const initialRef = (() => {
+    try {
+      return (new URLSearchParams(window.location.search).get("ref") || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "");
+    } catch {
+      return "";
+    }
+  })();
+
+  const [authOpen, setAuthOpen] = useState(Boolean(initialRef));
   const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [referralCode, setReferralCode] = useState(initialRef);
 
   const openAuth = (mode: "login" | "signup") => {
     setAuthMode(mode);
@@ -787,6 +846,8 @@ export function LandingPage({ onAuthenticated }: LandingPageProps) {
       </footer>
 
       <AuthModal
+        referralCode={referralCode}
+        onReferralCodeChange={setReferralCode}
         open={authOpen}
         mode={authMode}
         onClose={() => setAuthOpen(false)}
