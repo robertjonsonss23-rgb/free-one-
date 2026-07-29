@@ -28,6 +28,7 @@ import {
   createOwnerAccount,
   setUserOwner,
   setUserOrderAccess,
+  sendTelegramTest,
   fetchAdminDeposits,
   reviewDeposit,
   adjustUserWallet,
@@ -368,6 +369,10 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         upiMethods: payment.upiMethods,
         cryptoMethods: payment.cryptoMethods,
         cryptoPacks: payment.cryptoPacks,
+        referralEnabled: payment.referralEnabled,
+        referrerReward: payment.referrerReward,
+        refereeReward: payment.refereeReward,
+        referralMinDeposit: payment.referralMinDeposit,
         paywallEnabled: payment.paywallEnabled,
         paywallPrice: payment.paywallPrice,
         paywallCryptoPrice: payment.paywallCryptoPrice,
@@ -406,6 +411,19 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       await loadPaymentSettings(password);
     } finally {
       setSavingPaywall(false);
+    }
+  };
+
+  const [tgTesting, setTgTesting] = useState(false);
+  const handleTelegramTest = async () => {
+    setTgTesting(true);
+    try {
+      await sendTelegramTest(password);
+      fireToast("success", "Test alert sent — check your Telegram.");
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Could not send the test alert.");
+    } finally {
+      setTgTesting(false);
     }
   };
 
@@ -1495,6 +1513,84 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   </div>
                 </div>
 
+                {/* ---- Referral programme ---- */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Refer &amp; earn
+                      </h3>
+                      <p className="mt-0.5 max-w-xl text-sm text-slate-500">
+                        Rewards are paid only after the invited friend&apos;s first
+                        deposit is approved, so fake signups cost you nothing.
+                      </p>
+                    </div>
+                    <label className="flex shrink-0 items-center gap-2 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={payment.referralEnabled}
+                        onChange={(e) => patchPayment({ referralEnabled: e.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Inviter gets (₹)
+                      </label>
+                      <input
+                        type="number"
+                        value={payment.referrerReward}
+                        onChange={(e) => patchPayment({ referrerReward: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Friend gets (₹)
+                      </label>
+                      <input
+                        type="number"
+                        value={payment.refereeReward}
+                        onChange={(e) => patchPayment({ refereeReward: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Min. deposit to qualify (₹)
+                      </label>
+                      <input
+                        type="number"
+                        value={payment.referralMinDeposit}
+                        onChange={(e) => patchPayment({ referralMinDeposit: Number(e.target.value) })}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Each successful referral costs you ₹
+                    {(payment.referrerReward || 0) + (payment.refereeReward || 0)} in
+                    credit, against a minimum ₹{payment.referralMinDeposit || 0} deposit.
+                  </p>
+                </div>
+
+                {/* ---- Telegram alerts ---- */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Telegram alerts</h3>
+                  <p className="mt-0.5 mb-3 max-w-xl text-sm text-slate-500">
+                    Get a phone notification the moment a deposit or unlock request
+                    arrives. Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Render,
+                    then use this button to confirm it works.
+                  </p>
+                  <Button variant="secondary" size="sm" loading={tgTesting} onClick={handleTelegramTest}>
+                    Send test alert
+                  </Button>
+                </div>
+
                 <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
                   <Button variant="primary" onClick={handleSavePayment} loading={savingPayment}>
                     Save payment settings
@@ -1884,7 +1980,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                       <th className="py-2 pr-3 font-semibold">Name</th>
                       <th className="py-2 pr-3 font-semibold">Balance</th>
                       <th className="py-2 pr-3 font-semibold">Orders</th>
-                      <th className="py-2 pr-3 font-semibold">Last login</th>
+                      <th className="py-2 pr-3 font-semibold">Refs</th>
+                      <th className="py-2 pr-3 font-semibold">Seen</th>
                       <th className="py-2 pr-3 font-semibold">Status</th>
                       <th className="py-2 font-semibold" />
                     </tr>
@@ -1892,7 +1989,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   <tbody>
                     {users.map((u) => (
                       <tr key={u.id} className="border-b border-slate-100 last:border-0">
-                        <td className="max-w-52 truncate py-2.5 pr-3 font-medium text-slate-900" title={u.email}>
+                        <td className="max-w-40 truncate py-2.5 pr-3 font-medium text-slate-900" title={u.email}>
                           {u.email}
                           {u.isOwner && (
                             <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">
@@ -1905,8 +2002,21 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                           ₹{u.balance.toFixed(2)}
                         </td>
                         <td className="py-2.5 pr-3 tabular-nums text-slate-600">{u.orderCount}</td>
-                        <td className="py-2.5 pr-3 text-slate-500">
-                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "—"}
+                        <td className="py-2.5 pr-3 text-slate-600">
+                          <span className="tabular-nums font-semibold">{u.referralCount}</span>
+                          {u.referralCode && (
+                            <div
+                              className="font-mono text-[10px] text-slate-400"
+                              title="Their referral code"
+                            >
+                              {u.referralCode}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-3 whitespace-nowrap text-xs text-slate-500">
+                          {u.lastLoginAt
+                            ? new Date(u.lastLoginAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                            : "—"}
                         </td>
                         <td className="py-2.5 pr-3">
                           <div className="flex flex-col items-start gap-1">
