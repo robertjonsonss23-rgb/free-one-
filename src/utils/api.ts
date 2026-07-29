@@ -784,12 +784,13 @@ function normalizeUser(raw: unknown): AuthUser {
 export async function signup(
   email: string,
   password: string,
-  name?: string
+  name?: string,
+  referralCode?: string
 ): Promise<AuthResult> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, referralCode }),
   });
   const payload = await parseOrThrow(response);
   const token = String(payload.token || "");
@@ -859,6 +860,8 @@ export interface AdminUser {
   isOwner: boolean;
   /** True once this account has unlocked the New Order page. */
   hasOrderAccess: boolean;
+  referralCode: string;
+  referralCount: number;
   balance: number;
   createdAt: string | null;
   lastLoginAt: string | null;
@@ -880,6 +883,8 @@ export async function fetchAdminUsers(password: string): Promise<AdminUser[]> {
       isActive: o.isActive !== false,
       isOwner: o.isOwner === true,
       hasOrderAccess: o.hasOrderAccess === true,
+      referralCode: String(o.referralCode ?? ""),
+      referralCount: Number(o.referralCount) || 0,
       balance: Number(o.balance) || 0,
       createdAt: typeof o.createdAt === "string" ? o.createdAt : null,
       lastLoginAt: typeof o.lastLoginAt === "string" ? o.lastLoginAt : null,
@@ -1063,7 +1068,7 @@ export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
 
 export interface WalletTransaction {
   id: string;
-  type: "deposit" | "order_debit" | "refund" | "admin_credit" | "admin_debit";
+  type: "deposit" | "order_debit" | "refund" | "admin_credit" | "admin_debit" | "referral";
   amount: number;          // rupees; negative = debit
   balanceAfter: number;
   note: string;
@@ -1280,6 +1285,11 @@ export interface AdminPaymentSettings {
   upiMethods: AdminUpiMethod[];
   cryptoMethods: AdminCryptoMethod[];
   cryptoPacks: AdminCryptoPack[];
+  /* ---- Referral programme ---- */
+  referralEnabled: boolean;
+  referrerReward: number;
+  refereeReward: number;
+  referralMinDeposit: number;
   /* ---- New Order paywall ---- */
   paywallEnabled: boolean;
   paywallPrice: number;
@@ -1408,6 +1418,10 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         isActive: o.isActive !== false,
       };
     }),
+    referralEnabled: Boolean(payload.referralEnabled),
+    referrerReward: Number(payload.referrerReward) || 0,
+    refereeReward: Number(payload.refereeReward) || 0,
+    referralMinDeposit: Number(payload.referralMinDeposit) || 0,
     paywallEnabled: Boolean(payload.paywallEnabled),
     paywallPrice: Number(payload.paywallPrice) || 0,
     paywallCryptoPrice: String(payload.paywallCryptoPrice || ""),
@@ -1427,6 +1441,10 @@ export async function savePaymentSettings(
     upiMethods: AdminUpiMethod[];
     cryptoMethods: AdminCryptoMethod[];
     cryptoPacks: AdminCryptoPack[];
+    referralEnabled: boolean;
+    referrerReward: number;
+    refereeReward: number;
+    referralMinDeposit: number;
     paywallEnabled: boolean;
     paywallPrice: number;
     paywallCryptoPrice: string;
@@ -1635,6 +1653,95 @@ export async function setUserOrderAccess(
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
     body: JSON.stringify({ hasOrderAccess }),
+  });
+  await parseOrThrow(response);
+}
+
+
+/* ============================================================
+   REFERRALS
+   ============================================================ */
+
+export interface ReferralInvite {
+  /** Partially masked, e.g. "bo***@gmail.com". */
+  email: string;
+  joinedAt: string;
+  rewarded: boolean;
+}
+
+export interface ReferralStatus {
+  enabled: boolean;
+  code: string;
+  referrerReward: number;
+  refereeReward: number;
+  /** Friend must deposit at least this before either side is paid. */
+  minDeposit: number;
+  totalInvited: number;
+  totalRewarded: number;
+  earned: number;
+  invites: ReferralInvite[];
+}
+
+export async function fetchReferral(): Promise<ReferralStatus> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/referral`, { method: "GET" });
+  const payload = await parseOrThrow(response);
+  return {
+    enabled: Boolean(payload.enabled),
+    code: String(payload.code || ""),
+    referrerReward: Number(payload.referrerReward) || 0,
+    refereeReward: Number(payload.refereeReward) || 0,
+    minDeposit: Number(payload.minDeposit) || 0,
+    totalInvited: Number(payload.totalInvited) || 0,
+    totalRewarded: Number(payload.totalRewarded) || 0,
+    earned: Number(payload.earned) || 0,
+    invites: (Array.isArray(payload.invites) ? payload.invites : []).map((i) => {
+      const o = i as Record<string, unknown>;
+      return {
+        email: String(o.email ?? ""),
+        joinedAt: String(o.joinedAt ?? ""),
+        rewarded: o.rewarded === true,
+      };
+    }),
+  };
+}
+
+export interface ReferralCheck {
+  valid: boolean;
+  enabled: boolean;
+  invitedBy: string;
+  refereeReward: number;
+  minDeposit: number;
+}
+
+/** Public: confirm a code before signing up. Never throws. */
+export async function checkReferralCode(code: string): Promise<ReferralCheck> {
+  const empty: ReferralCheck = {
+    valid: false, enabled: false, invitedBy: "", refereeReward: 0, minDeposit: 0,
+  };
+  if (!code.trim()) return empty;
+  try {
+    const response = await fetch(
+      `${BACKEND_BASE_URL}/api/referral/check/${encodeURIComponent(code.trim())}`
+    );
+    if (!response.ok) return empty;
+    const payload = (await response.json()) as Record<string, unknown>;
+    return {
+      valid: payload.valid === true,
+      enabled: payload.enabled === true,
+      invitedBy: String(payload.invitedBy || ""),
+      refereeReward: Number(payload.refereeReward) || 0,
+      minDeposit: Number(payload.minDeposit) || 0,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/** Admin: send a test alert to confirm the Telegram bot works. */
+export async function sendTelegramTest(password: string): Promise<void> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/telegram/test`, {
+    method: "POST",
+    headers: { "x-admin-password": password },
   });
   await parseOrThrow(response);
 }
