@@ -5,6 +5,7 @@ import { NewOrderPage } from "./pages/NewOrderPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { WalletPage } from "./pages/WalletPage";
 import { PaywallPage } from "./pages/PaywallPage";
+import { ReferralPage } from "./pages/ReferralPage";
 import type {
   CreatedOrder,
   RunStatus,
@@ -27,13 +28,15 @@ type NavKey =
   | "dashboard"
   | "new-order"
   | "orders"
-  | "wallet";
+  | "wallet"
+  | "referrals";
 
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
   { key: "new-order", label: "New Order", description: "Create a campaign" },
   { key: "orders", label: "Orders", description: "Manage active orders" },
   { key: "wallet", label: "Wallet", description: "Balance & top-ups" },
+  { key: "referrals", label: "Refer & Earn", description: "Invite friends, earn credit" },
 ];
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -152,7 +155,8 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       saved === "dashboard" ||
       saved === "new-order" ||
       saved === "orders" ||
-      saved === "wallet"
+      saved === "wallet" ||
+      saved === "referrals"
     ) {
       return saved;
     }
@@ -428,6 +432,10 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
 
     if (activePage === "wallet") {
       return <WalletPage onBalanceChange={setBalance} isOwner={user.isOwner} />;
+    }
+
+    if (activePage === "referrals") {
+      return <ReferralPage />;
     }
 
 
