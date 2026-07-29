@@ -1014,3 +1014,23 @@ html.theme-ready body {
 .pay-amount-label { color: #94a3b8; }
 .pay-amount-note  { color: #cbd5e1; }
 .dark .pay-amount-strip { background-color: #050912; }
+
+/* ---- Referral share buttons ----
+   Tailwind's emerald/sky utilities are remapped by .dark, which pulled the
+   Telegram button's background to almost exactly its own text colour. These
+   are brand colours, so pin them literally in both themes. */
+.share-btn { color: #ffffff; }
+.share-btn-whatsapp { background-color: #16a34a; }
+.share-btn-whatsapp:hover { background-color: #15803d; }
+.share-btn-telegram { background-color: #0284c7; }
+.share-btn-telegram:hover { background-color: #0369a1; }
+
+/* ---- Solid-colour buttons keep white text in dark mode ----
+   These variants paint a saturated background, so their label must stay
+   genuinely white. Tailwind compiles `text-white` to var(--color-white),
+   which .dark remaps to a near-black panel colour — turning the label
+   almost invisible (measured 2.83:1 on the primary button). */
+.dark .bg-indigo-600.text-white,
+.dark .bg-rose-600.text-white,
+.dark .bg-emerald-600.text-white,
+.dark .bg-violet-600.text-white { color: #ffffff; }
