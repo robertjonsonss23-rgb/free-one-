@@ -1285,6 +1285,9 @@ export interface AdminPaymentSettings {
   upiMethods: AdminUpiMethod[];
   cryptoMethods: AdminCryptoMethod[];
   cryptoPacks: AdminCryptoPack[];
+  /* ---- Orders display mask ---- */
+  hideRunProblems: boolean;
+  pendingGraceMinutes: number;
   /* ---- Referral programme ---- */
   referralEnabled: boolean;
   referrerReward: number;
@@ -1418,6 +1421,8 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         isActive: o.isActive !== false,
       };
     }),
+    hideRunProblems: Boolean(payload.hideRunProblems),
+    pendingGraceMinutes: Number(payload.pendingGraceMinutes) || 15,
     referralEnabled: Boolean(payload.referralEnabled),
     referrerReward: Number(payload.referrerReward) || 0,
     refereeReward: Number(payload.refereeReward) || 0,
@@ -1441,6 +1446,8 @@ export async function savePaymentSettings(
     upiMethods: AdminUpiMethod[];
     cryptoMethods: AdminCryptoMethod[];
     cryptoPacks: AdminCryptoPack[];
+    hideRunProblems: boolean;
+    pendingGraceMinutes: number;
     referralEnabled: boolean;
     referrerReward: number;
     refereeReward: number;
