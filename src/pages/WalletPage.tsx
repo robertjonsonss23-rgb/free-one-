@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { currencySymbol, formatMoney, formatMoneyShort, useCurrency } from "../utils/currency";
 import { Button, Card, Input, InfoBanner, Spinner, StatusPill } from "../components/ui";
 import {
   selfTopUp,
@@ -17,10 +18,6 @@ interface WalletPageProps {
 }
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000, 2000];
-
-function formatMoney(value: number): string {
-  return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function formatDate(iso: string): string {
   if (!iso) return "—";
@@ -40,6 +37,8 @@ const TX_LABEL: Record<string, string> = {
 };
 
 export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps) {
+  // Re-render when the user switches display currency.
+  useCurrency();
   const [wallet, setWallet] = useState<WalletData | null>(null);
   const [methods, setMethods] = useState<PaymentMethods | null>(null);
   const [loading, setLoading] = useState(true);
@@ -235,7 +234,7 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-40 flex-1">
               <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                Amount (₹)
+                Amount ({currencySymbol()})
               </label>
               <input
                 type="number"
@@ -278,7 +277,7 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                 onClick={() => setOwnerAmount(String(q))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300"
               >
-                ₹{q.toLocaleString()}
+                {formatMoneyShort(q)}
               </button>
             ))}
           </div>
@@ -470,7 +469,7 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                                 : "border-slate-200 text-slate-600 hover:border-slate-300"
                             }`}
                           >
-                            ₹{q}
+                            {formatMoneyShort(q)}
                           </button>
                         ))}
                       </div>
