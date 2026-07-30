@@ -520,11 +520,15 @@ export interface ServiceAvailability {
   enabled: boolean;
   count: number;
   rotating: boolean;
+  /** Provider detail — only populated for owner accounts. */
   slots: Array<{ serviceId: string; panelId: string; panelName: string }>;
 }
 
 export interface PanelConfig {
+  /** Empty for normal users; provider names are owner-only. */
   panels: Array<{ id: string; name: string }>;
+  /** Always present, so the UI can say "3 providers" without naming them. */
+  panelCount: number;
   services: Record<ServiceLabel, ServiceAvailability>;
   configured: boolean;
   updatedAt: string | null;
@@ -593,6 +597,7 @@ function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
       const row = p as Record<string, unknown>;
       return { id: String(row.id ?? ""), name: String(row.name ?? "") };
     }),
+    panelCount: Number(raw.panelCount) || panels.length,
     services,
     configured: Boolean(raw.configured),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
@@ -644,7 +649,8 @@ async function parseOrThrow(response: Response) {
 
 /** Public — used by the New Order page. Never contains the API key. */
 export async function fetchPanelConfig(): Promise<PanelConfig> {
-  const response = await fetch(`${BACKEND_BASE_URL}/api/panel-config`);
+  // Authenticated so the server can decide whether to reveal provider names.
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/panel-config`, { method: "GET" });
   return normalizeConfig(await parseOrThrow(response));
 }
 
@@ -910,6 +916,24 @@ export async function setUserActive(
    PRICE QUOTE (calculated server-side; rates need the admin API key)
    ============================================================ */
 
+/** Per service-id cost detail. Owner accounts only. */
+export interface QuoteSlotCost {
+  label: string;
+  serviceId: string;
+  panelName: string;
+  /** Units this specific slot receives, after the run rotation. */
+  units: number;
+  /** How many runs land on this slot. */
+  runs: number;
+  /** Provider rate per 1000 units, in `currency`. */
+  rate: number | null;
+  currency: string;
+  /** Cost in rupees. */
+  cost: number;
+  /** False when the panel didn't return a usable rate. */
+  priced: boolean;
+}
+
 export interface QuoteResult {
   available: boolean;
   reason?: string;
@@ -922,11 +946,20 @@ export interface QuoteResult {
   /** True when the balance covers the total. */
   sufficient: boolean;
   /** Only present for owner accounts. */
-  owner?: { panelCost: number; commission: number; markupPercent: number };
+  owner?: {
+    panelCost: number;
+    commission: number;
+    markupPercent: number;
+    slots: QuoteSlotCost[];
+    /** True when priced from the real run list rather than an even split. */
+    exact: boolean;
+  };
 }
 
 export async function fetchQuote(
-  services: Partial<Record<ServiceLabel, number>>
+  /* A number is a total (split evenly across slots — an estimate).
+     An array of per-run quantities is priced against the real rotation. */
+  services: Partial<Record<ServiceLabel, number | number[]>>
 ): Promise<QuoteResult> {
   const response = await authedFetch(`${BACKEND_BASE_URL}/api/quote`, {
     method: "POST",
@@ -947,6 +980,24 @@ export async function fetchQuote(
           panelCost: Number((payload.owner as Record<string, unknown>).panelCost) || 0,
           commission: Number((payload.owner as Record<string, unknown>).commission) || 0,
           markupPercent: Number((payload.owner as Record<string, unknown>).markupPercent) || 0,
+          exact: (payload.owner as Record<string, unknown>).exact === true,
+          slots: (Array.isArray((payload.owner as Record<string, unknown>).slots)
+            ? ((payload.owner as Record<string, unknown>).slots as unknown[])
+            : []
+          ).map((raw) => {
+            const o = raw as Record<string, unknown>;
+            return {
+              label: String(o.label ?? ""),
+              serviceId: String(o.serviceId ?? ""),
+              panelName: String(o.panelName ?? ""),
+              units: Number(o.units) || 0,
+              runs: Number(o.runs) || 0,
+              rate: o.rate === null || o.rate === undefined ? null : Number(o.rate),
+              currency: String(o.currency ?? "INR"),
+              cost: Number(o.cost) || 0,
+              priced: o.priced === true,
+            };
+          }),
         }
       : undefined,
   };
