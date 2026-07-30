@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { formatMoney, formatMoneyShort, useCurrency } from "../utils/currency";
 import { Button, Card, InfoBanner, Spinner } from "../components/ui";
 import {
   fetchOrderAccess,
@@ -15,13 +16,6 @@ interface PaywallPageProps {
   onBalanceChange?: (balance: number) => void;
   /** Lets the "top up first" button jump the user to the Wallet page. */
   onGoToWallet?: () => void;
-}
-
-function formatMoney(value: number): string {
-  return `₹${value.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 }
 
 function formatDate(iso: string): string {
@@ -49,6 +43,8 @@ export function PaywallPage({
   onBalanceChange,
   onGoToWallet,
 }: PaywallPageProps) {
+  // Re-render when the user switches display currency.
+  useCurrency();
   const [status, setStatus] = useState<OrderAccessStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -231,7 +227,7 @@ export function PaywallPage({
           </div>
           <div className="shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 px-6 py-4 text-center shadow-lg">
             <p className="text-3xl font-extrabold leading-none text-[#ffffff]">
-              ₹{price.toLocaleString("en-IN")}
+              {formatMoneyShort(price)}
             </p>
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-100">
               Pay once
