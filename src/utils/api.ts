@@ -401,16 +401,19 @@ export async function fetchAllOrdersStatus(): Promise<{
   }
 }
 
+/** Lowest value the New Order page (and the server) will accept. */
+export const MIN_VIEWS_FLOOR = 100;
+
 export async function fetchMinViewsSetting(): Promise<number> {
   const endpoint = `${BACKEND_BASE_URL}/api/settings/min-views`;
 
   try {
     const response = await fetch(endpoint);
     const data = await response.json();
-    return data.minViewsPerRun || 10;
+    return Math.max(MIN_VIEWS_FLOOR, Number(data.minViewsPerRun) || MIN_VIEWS_FLOOR);
   } catch (error) {
-    console.warn("[Fetch Min Views] Failed, using default 10");
-    return 10;
+    console.warn(`[Fetch Min Views] Failed, using default ${MIN_VIEWS_FLOOR}`);
+    return MIN_VIEWS_FLOOR;
   }
 }
 
