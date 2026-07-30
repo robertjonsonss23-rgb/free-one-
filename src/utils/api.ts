@@ -1170,6 +1170,8 @@ export interface CryptoMethod {
   qrImage: string;
   /** Ticker shown beside amounts, e.g. "USDT". */
   coin: string;
+  /** Rupees one unit is worth. 0 means fixed packs are used instead. */
+  inrPerUnit: number;
 }
 
 export interface CryptoPack {
@@ -1253,6 +1255,7 @@ export async function fetchPaymentMethods(): Promise<PaymentMethods> {
         instructions: String(o.instructions ?? ""),
         qrImage: String(o.qrImage ?? ""),
         coin: String(o.coin ?? "USDT"),
+        inrPerUnit: Number(o.inrPerUnit) || 0,
       };
     }),
     cryptoPacks: (Array.isArray(payload.cryptoPacks) ? payload.cryptoPacks : []).map((p) => {
@@ -1272,7 +1275,9 @@ export async function submitDeposit(payload: {
   method: "upi" | "crypto";
   methodId: string;
   reference: string;
-  /** Required for crypto: which fixed rupee/crypto pack they bought. */
+  /** Crypto with a rate configured: how much coin they sent. */
+  cryptoAmount?: string;
+  /** Crypto without a rate: which fixed rupee/crypto pack they bought. */
   packId?: string;
 }): Promise<{ message: string }> {
   const response = await authedFetch(`${BACKEND_BASE_URL}/api/wallet/deposit`, {
@@ -1325,6 +1330,8 @@ export interface AdminCryptoMethod {
   qrImage: string;
   isActive: boolean;
   coin: string;
+  /** Rupees per unit. 0 = use fixed packs instead of a typed amount. */
+  inrPerUnit: number;
 }
 
 export interface AdminCryptoPack {
@@ -1469,6 +1476,7 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         qrImage: String(o.qrImage ?? ""),
         isActive: o.isActive !== false,
         coin: String(o.coin ?? "USDT"),
+        inrPerUnit: Number(o.inrPerUnit) || 0,
       };
     }),
     cryptoPacks: (Array.isArray(payload.cryptoPacks) ? payload.cryptoPacks : []).map((p) => {
@@ -1606,6 +1614,8 @@ export interface OrderAccessStatus {
   price: number;
   /** Exact crypto amount for the unlock; "" when the admin hasn't set one. */
   cryptoPrice: string;
+  /** Ticker for `cryptoPrice`, e.g. "USDT". */
+  cryptoCoin: string;
   title: string;
   blurb: string;
   /** Wallet balance in rupees, so the page can offer "pay from wallet". */
@@ -1652,6 +1662,7 @@ function normalizePaymentBlock(raw: unknown): PaymentMethods {
         instructions: String(x.instructions ?? ""),
         qrImage: String(x.qrImage ?? ""),
         coin: String(x.coin ?? "USDT"),
+        inrPerUnit: Number(x.inrPerUnit) || 0,
       };
     }),
     cryptoPacks: (Array.isArray(o.cryptoPacks) ? o.cryptoPacks : []).map((p) => {
@@ -1676,6 +1687,7 @@ export async function fetchOrderAccess(): Promise<OrderAccessStatus> {
     isOwner: Boolean(payload.isOwner),
     price: Number(payload.price) || 0,
     cryptoPrice: String(payload.cryptoPrice || ""),
+    cryptoCoin: String(payload.cryptoCoin || "USDT"),
     title: String(payload.title || "Unlock New Order"),
     blurb: String(payload.blurb || ""),
     balance: Number(payload.balance) || 0,
