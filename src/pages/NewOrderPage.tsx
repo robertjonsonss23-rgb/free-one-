@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RunTable } from "../components/RunTable";
-import { formatMoney, formatMoneyShort, useCurrency } from "../utils/currency";
+import { formatMoney, useCurrency } from "../utils/currency";
 import type {
   CreatedOrder,
   DeliveryOption,
@@ -25,6 +25,7 @@ import {
   Card,
   StatusPill,
   InfoBanner,
+  Spinner,
 } from "../components/ui";
 
 interface NewOrderPageProps {
@@ -494,7 +495,12 @@ export function NewOrderPage({
         .catch(() => { if (!cancelled) setQuote(null); })
         .finally(() => { if (!cancelled) setQuoteLoading(false); });
     }, 700);
-    return () => { cancelled = true; clearTimeout(timer); setQuoteLoading(false); clearTimeout(timer); };
+    /* Only cancel the in-flight request. Clearing the loading flag here too
+       would switch it off on every keystroke, so the stale price flashed
+       back between edits instead of staying hidden. The next run of this
+       effect sets it true again, and whichever request finally lands clears
+       it — so the flag tracks the newest request, not the last render. */
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [quotePayload, panelConfig?.configured]);
 
   return (
@@ -593,7 +599,7 @@ export function NewOrderPage({
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Min / run</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">Min Views / run</label>
                 <input
                   type="number"
                   value={minViewsPerRun}
@@ -1015,7 +1021,19 @@ export function NewOrderPage({
 
           <div className="px-3 sm:px-4 py-3 bg-gradient-to-r from-slate-50 to-indigo-50/30 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1 min-w-0">
-              {estimatedRunCount > 0 && quote?.available ? (
+              {/* While a new quote is in flight, hide the old figure — showing a
+                  stale price next to changed settings reads as the new cost. */}
+              {quoteLoading ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    Estimated cost
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-400">
+                    <Spinner size="sm" />
+                    Calculating…
+                  </span>
+                </div>
+              ) : estimatedRunCount > 0 && quote?.available ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
                     Estimated cost
@@ -1026,32 +1044,32 @@ export function NewOrderPage({
                   <div className="flex flex-wrap gap-1">
                     {quote.breakdown.views != null && (
                       <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        Views {formatMoneyShort(quote.breakdown.views)}
+                        Views {formatMoney(quote.breakdown.views)}
                       </span>
                     )}
                     {quote.breakdown.likes != null && (
                       <span className="inline-flex items-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-                        ❤️ {formatMoneyShort(quote.breakdown.likes)}
+                        ❤️ {formatMoney(quote.breakdown.likes)}
                       </span>
                     )}
                     {quote.breakdown.shares != null && (
                       <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                        🔁 {formatMoneyShort(quote.breakdown.shares)}
+                        🔁 {formatMoney(quote.breakdown.shares)}
                       </span>
                     )}
                     {quote.breakdown.saves != null && (
                       <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
-                        🔖 {formatMoneyShort(quote.breakdown.saves)}
+                        🔖 {formatMoney(quote.breakdown.saves)}
                       </span>
                     )}
                     {quote.breakdown.reposts != null && (
                       <span className="inline-flex items-center rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
-                        📢 {formatMoneyShort(quote.breakdown.reposts)}
+                        📢 {formatMoney(quote.breakdown.reposts)}
                       </span>
                     )}
                     {quote.breakdown.comments != null && (
                       <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                        💬 {formatMoneyShort(quote.breakdown.comments)}
+                        💬 {formatMoney(quote.breakdown.comments)}
                       </span>
                     )}
                   </div>
