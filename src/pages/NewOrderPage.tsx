@@ -5,7 +5,7 @@ import type {
   CreatedOrder,
   DeliveryOption,
   EngagementRatios,
-  OrderConfig, 
+  OrderConfig,
   PatternPlan,
   QuickPatternPreset,
 } from "../types/order";
@@ -469,17 +469,25 @@ export function NewOrderPage({
   /* Ask the server to price this plan. Rates live behind the admin API key,
      so the maths happens server-side and only totals come back.
      Debounced because the plan changes on every slider tweak. */
-  const quotePayload = useMemo(() => ({
-    views: safePlan.runs.reduce((sum, r) => sum + Math.max(Math.floor(r.views || 0), minViewsPerRun), 0),
-    likes: includeLikes ? graphTotals.likes : 0,
-    shares: includeShares ? graphTotals.shares : 0,
-    saves: includeSaves ? graphTotals.saves : 0,
-    reposts: includeReposts ? graphTotals.reposts : 0,
-    comments: includeComments ? graphTotals.comments : 0,
-  }), [safePlan.runs, minViewsPerRun, graphTotals, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
+  /* Per-run quantities, in scheduling order. The server rotates run i onto
+     slot (i % slotCount), so sending the real list — instead of one total —
+     is what makes the quoted cost match what the panels will actually bill. */
+  const quotePayload = useMemo(() => {
+    const perRun = (pick: (r: (typeof safePlan.runs)[number]) => number) =>
+      safePlan.runs.map((r) => Math.max(0, Math.floor(pick(r) || 0))).filter((n) => n > 0);
+
+    return {
+      views: safePlan.runs.map((r) => Math.max(Math.floor(r.views || 0), minViewsPerRun)),
+      likes: includeLikes ? perRun((r) => r.likes) : [],
+      shares: includeShares ? perRun((r) => r.shares) : [],
+      saves: includeSaves ? perRun((r) => r.saves) : [],
+      reposts: includeReposts ? perRun((r) => r.reposts) : [],
+      comments: includeComments ? perRun((r) => r.comments) : [],
+    };
+  }, [safePlan.runs, minViewsPerRun, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
 
   useEffect(() => {
-    if (!panelConfig?.configured || quotePayload.views <= 0) {
+    if (!panelConfig?.configured || quotePayload.views.length === 0) {
       setQuote(null);
       return;
     }
@@ -663,10 +671,16 @@ export function NewOrderPage({
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                      {panelConfig.panels.length > 1 ? "Panels" : "Panel"}
+                      {panelConfig.panelCount > 1 ? "Providers" : "Provider"}
                     </span>
+                    {/* Provider names are owner-only: telling a customer which
+                        panel you resell from invites them to buy direct. */}
                     <span className="truncate text-xs font-extrabold text-slate-900">
-                      {panelConfig.panels.map((p) => p.name).join(" · ") || "Configured"}
+                      {panelConfig.panels.length > 0
+                        ? panelConfig.panels.map((p) => p.name).join(" · ")
+                        : panelConfig.panelCount > 0
+                        ? `${panelConfig.panelCount} connected`
+                        : "Configured"}
                     </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1">
@@ -678,11 +692,15 @@ export function NewOrderPage({
                           <span
                             key={k}
                             title={
-                              info.rotating
-                                ? `Rotates across ${info.count} services: ${info.slots
-                                    .map((s) => `${s.serviceId} (${s.panelName})`)
-                                    .join(", ")}`
-                                : `Service ${info.slots[0]?.serviceId} on ${info.slots[0]?.panelName}`
+                              info.slots.length > 0
+                                ? info.rotating
+                                  ? `Rotates across ${info.count} services: ${info.slots
+                                      .map((s) => `${s.serviceId} (${s.panelName})`)
+                                      .join(", ")}`
+                                  : `Service ${info.slots[0]?.serviceId} on ${info.slots[0]?.panelName}`
+                                : info.rotating
+                                ? `Delivered across ${info.count} providers`
+                                : "Available"
                             }
                             className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
                           >
@@ -1095,6 +1113,82 @@ export function NewOrderPage({
                         </span>{" "}
                         ({quote.owner.markupPercent}% markup)
                       </p>
+
+                      {/* Per service-id audit: which panel gets what, and at
+                          what rate. Lets you spot a mis-mapped or overpriced
+                          slot before you ever place the order. */}
+                      {quote.owner.slots.length > 0 && (
+                        <div className="mt-1.5 border-t border-amber-200 pt-1.5">
+                          <div className="mb-1 flex items-center justify-between">
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-amber-700">
+                              Cost per service id
+                            </p>
+                            <span
+                              className={`rounded px-1 py-0.5 text-[8px] font-bold uppercase ${
+                                quote.owner.exact
+                                  ? "bg-emerald-200 text-emerald-800"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}
+                              title={
+                                quote.owner.exact
+                                  ? "Priced from the actual run rotation"
+                                  : "Estimated by splitting units evenly"
+                              }
+                            >
+                              {quote.owner.exact ? "exact" : "estimate"}
+                            </span>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-[9px]">
+                              <thead>
+                                <tr className="text-amber-700">
+                                  <th className="pr-2 font-semibold">Service</th>
+                                  <th className="pr-2 font-semibold">Panel</th>
+                                  <th className="pr-2 text-right font-semibold">Units</th>
+                                  <th className="pr-2 text-right font-semibold">Runs</th>
+                                  <th className="pr-2 text-right font-semibold">Rate/1k</th>
+                                  <th className="text-right font-semibold">Cost</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {quote.owner.slots.map((sl, i) => (
+                                  <tr
+                                    key={`${sl.label}-${sl.serviceId}-${i}`}
+                                    className={sl.priced ? "" : "text-rose-600"}
+                                  >
+                                    <td className="pr-2">
+                                      <span className="uppercase text-amber-900">{sl.label}</span>{" "}
+                                      <span className="font-mono">{sl.serviceId}</span>
+                                    </td>
+                                    <td className="pr-2 truncate text-amber-900" title={sl.panelName}>
+                                      {sl.panelName}
+                                    </td>
+                                    <td className="pr-2 text-right font-mono tabular-nums text-amber-900">
+                                      {sl.units.toLocaleString()}
+                                    </td>
+                                    <td className="pr-2 text-right font-mono tabular-nums text-amber-900">
+                                      {sl.runs}
+                                    </td>
+                                    <td className="pr-2 text-right font-mono tabular-nums text-amber-900">
+                                      {sl.rate === null
+                                        ? "—"
+                                        : `${sl.rate}${sl.currency !== "INR" ? ` ${sl.currency}` : ""}`}
+                                    </td>
+                                    <td className="text-right font-mono tabular-nums font-bold text-amber-900">
+                                      {sl.priced ? `₹${sl.cost.toFixed(2)}` : "no rate"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {quote.owner.slots.some((sl) => !sl.priced) && (
+                            <p className="mt-1 text-[9px] font-semibold text-rose-600">
+                              A slot returned no rate — check that service id exists on that panel.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
