@@ -55,6 +55,8 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
   const [copied, setCopied] = useState("");
   // Which fixed rupee/crypto pack a crypto buyer selected.
   const [packId, setPackId] = useState("");
+  // How much coin the user says they're sending (when a rate is configured).
+  const [cryptoAmount, setCryptoAmount] = useState("");
   const [ownerAmount, setOwnerAmount] = useState("");
   const [ownerBusy, setOwnerBusy] = useState(false);
 
@@ -86,17 +88,29 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
   const packs = methods?.cryptoPacks ?? [];
   /* Crypto has no exchange rate, so it is only usable once the admin has
      published at least one fixed rupee/crypto pack. */
-  const cryptoUsable = (methods?.cryptoMethods.length ?? 0) > 0 && packs.length > 0;
+  const cryptoUsable =
+    (methods?.cryptoMethods.length ?? 0) > 0 &&
+    (packs.length > 0 || (methods?.cryptoMethods ?? []).some((m) => m.inrPerUnit > 0));
   const effectiveKind: "upi" | "crypto" = kind === "crypto" && !cryptoUsable ? "upi" : kind;
   const activeMethods =
     effectiveKind === "upi" ? (methods?.upiMethods ?? []) : (methods?.cryptoMethods ?? []);
   const selected = activeMethods.find((m) => m.id === methodId) ?? activeMethods[0];
   const coin = (selected as { coin?: string } | undefined)?.coin || "USDT";
   const selectedPack = packs.find((p) => p.id === packId) ?? null;
+  /* With a rate configured the user types any amount; without one they must
+     pick a fixed pack. */
+  const cryptoRate = (selected as { inrPerUnit?: number } | undefined)?.inrPerUnit ?? 0;
+  const cryptoIsFreeform = effectiveKind === "crypto" && cryptoRate > 0;
+  const typedCrypto = Number(cryptoAmount) || 0;
+  /** Rupees that typed crypto amount is worth. */
+  const typedCryptoInr = cryptoIsFreeform ? typedCrypto * cryptoRate : 0;
+
   /** Exactly what the user must send, in whichever currency they picked. */
   const amountToSend =
     effectiveKind === "crypto"
-      ? selectedPack ? `${selectedPack.crypto} ${coin}` : ""
+      ? cryptoIsFreeform
+        ? typedCrypto > 0 ? `${typedCrypto} ${coin}` : ""
+        : selectedPack ? `${selectedPack.crypto} ${coin}` : ""
       : amount ? formatMoney(Number(amount) || 0) : "";
 
   const copy = async (text: string, tag: string) => {
@@ -120,7 +134,17 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
        because without a rate an arbitrary amount can't be converted. */
     let value = 0;
     if (effectiveKind === "crypto") {
-      if (!selectedPack) {
+      if (cryptoIsFreeform) {
+        if (typedCrypto <= 0) {
+          setFormError(`Enter how much ${coin} you sent.`);
+          return;
+        }
+        const min = methods?.minDeposit ?? 50;
+        if (typedCryptoInr < min) {
+          setFormError(`Minimum deposit is ${formatMoney(min)}.`);
+          return;
+        }
+      } else if (!selectedPack) {
         setFormError("Choose how much you want to add.");
         return;
       }
@@ -150,7 +174,9 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
     try {
       const result = await submitDeposit({
         ...(effectiveKind === "crypto"
-          ? { packId: selectedPack!.id }
+          ? cryptoIsFreeform
+            ? { cryptoAmount: String(typedCrypto) }
+            : { packId: selectedPack!.id }
           : { amount: value }),
         method: effectiveKind,
         methodId: selected.id,
@@ -159,6 +185,7 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
       setSuccess(result.message);
       setAmount("");
       setPackId("");
+      setCryptoAmount("");
       setReference("");
       setShowAdd(false);
       await load();
@@ -413,7 +440,65 @@ export function WalletPage({ onBalanceChange, isOwner = false }: WalletPageProps
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  {effectiveKind === "crypto" ? (
+                  {cryptoIsFreeform ? (
+                    /* A rate is configured, so the user chooses their own
+                       amount and sees the rupee value as they type. */
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                        How much {coin} are you sending?
+                      </label>
+                      <div className="flex items-stretch gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min={0}
+                            step="0.000001"
+                            value={cryptoAmount}
+                            onChange={(e) => { setCryptoAmount(e.target.value); setFormError(""); }}
+                            placeholder="0.00"
+                            className="w-full rounded-lg border-2 border-slate-300 px-3 py-2.5 pr-16 text-sm font-bold tabular-nums"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                            {coin}
+                          </span>
+                        </div>
+                        <div className="flex min-w-32 flex-col items-end justify-center rounded-lg border-2 border-emerald-200 bg-emerald-50 px-3 py-1.5">
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+                            You get
+                          </span>
+                          <span className="text-sm font-extrabold tabular-nums text-emerald-800">
+                            {typedCrypto > 0
+                              ? `₹${typedCryptoInr.toLocaleString("en-IN", {
+                                  minimumFractionDigits: Number.isInteger(Math.round(typedCryptoInr * 100) / 100) ? 0 : 2,
+                                  maximumFractionDigits: 2,
+                                })}`
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-1.5 text-xs text-slate-500">
+                        Rate: 1 {coin} = ₹{cryptoRate.toLocaleString("en-IN")} · minimum{" "}
+                        {formatMoney(methods?.minDeposit ?? 50)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[10, 25, 50, 100].map((q) => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => { setCryptoAmount(String(q)); setFormError(""); }}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                              cryptoAmount === String(q)
+                                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                                : "border-slate-200 text-slate-600 hover:border-slate-300"
+                            }`}
+                          >
+                            {q} {coin}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : effectiveKind === "crypto" ? (
                     /* No exchange rate exists, so the user picks a fixed
                        rupee/crypto pair the admin has published. */
                     <div>
