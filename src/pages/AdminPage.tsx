@@ -369,6 +369,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         upiMethods: payment.upiMethods,
         cryptoMethods: payment.cryptoMethods,
         cryptoPacks: payment.cryptoPacks,
+        hideRunProblems: payment.hideRunProblems,
+        pendingGraceMinutes: payment.pendingGraceMinutes,
         referralEnabled: payment.referralEnabled,
         referrerReward: payment.referrerReward,
         refereeReward: payment.refereeReward,
@@ -1510,6 +1512,60 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     <Button variant="ghost" size="sm" onClick={addCryptoPack}>
                       + Add amount
                     </Button>
+                  </div>
+                </div>
+
+                {/* ---- Orders display mask ---- */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Hide problems on the Orders page
+                      </h3>
+                      <p className="mt-0.5 max-w-xl text-sm text-slate-500">
+                        When on, customers never see failed runs, error messages or
+                        retry counts — those show as completed. A run still stuck on
+                        pending also flips to completed after the grace period below.
+                      </p>
+                    </div>
+                    <label className="flex shrink-0 items-center gap-2 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={payment.hideRunProblems}
+                        onChange={(e) => patchPayment({ hideRunProblems: e.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                  </div>
+
+                  <div className="max-w-xs">
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Pending shows as completed after (minutes)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      value={payment.pendingGraceMinutes}
+                      onChange={(e) => patchPayment({ pendingGraceMinutes: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      disabled={!payment.hideRunProblems}
+                    />
+                  </div>
+
+                  <div className="mt-3">
+                    <InfoBanner kind={payment.hideRunProblems ? "warning" : "info"}>
+                      {payment.hideRunProblems ? (
+                        <>
+                          <strong>Display only — nothing is cancelled.</strong> The system
+                          keeps retrying in the background, so a run shown as completed can
+                          still be delivered. Your <strong>owner accounts</strong> and this
+                          admin panel always see the real status.
+                        </>
+                      ) : (
+                        <>Customers currently see the real status, errors included.</>
+                      )}
+                    </InfoBanner>
                   </div>
                 </div>
 
