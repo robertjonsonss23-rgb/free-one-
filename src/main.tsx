@@ -8,9 +8,11 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Spinner } from "./components/ui.tsx";
 import {
   fetchCurrentUser,
+  fetchCurrencies,
   setUnauthorizedHandler,
   type AuthUser,
 } from "./utils/api.ts";
+import { INR, setCurrency } from "./utils/currency.ts";
 import { applyTheme, resolveInitialTheme, useTheme } from "./utils/theme.ts";
 
 // Apply the saved theme before React paints, so there is no white flash.
@@ -45,6 +47,18 @@ function Root() {
       .finally(() => { if (!cancelled) setChecking(false); });
     return () => { cancelled = true; };
   }, []);
+
+  /* Apply the account's saved display currency. Amounts stay in rupees on
+     the wire; this only decides how they are rendered. */
+  useEffect(() => {
+    if (!user) { setCurrency(INR); return; }
+    let cancelled = false;
+    fetchCurrencies().then((list) => {
+      if (cancelled) return;
+      setCurrency(list.find((c) => c.code === user.displayCurrency) || INR);
+    });
+    return () => { cancelled = true; };
+  }, [user]);
 
   // If any API call returns 401, drop straight back to the login screen.
   const handleUnauthorized = useCallback(() => setUser(null), []);
