@@ -5,12 +5,17 @@ import type {
   CreatedOrder,
   DeliveryOption,
   EngagementRatios,
-  OrderConfig, 
+  OrderConfig,
   PatternPlan,
   QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
-import { createSmmOrder, fetchPanelConfig, fetchQuote, BACKEND_BASE_URL, type PanelConfig, type QuoteResult,
+import {
+  createSmmOrder,
+  fetchPanelConfig,
+  fetchQuote,
+  type PanelConfig,
+  type QuoteResult,
   MIN_VIEWS_FLOOR,
 } from "../utils/api"; 
 import { createPatternPlan } from "../utils/patterns";
@@ -155,23 +160,8 @@ export function NewOrderPage({
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
-  useEffect(() => {
-    const fetchMinViews = async () => {
-      try {
-        const response = await fetch(`${BACKEND_BASE_URL}/api/settings/min-views`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.minViewsPerRun) {
-            // Never drop below the floor, even if an old value is stored.
-            setMinViewsPerRun(Math.max(MIN_VIEWS_FLOOR, Number(data.minViewsPerRun)));
-          }
-        }
-      } catch (error) {
-        console.warn(`Could not fetch min views setting, using default ${MIN_VIEWS_FLOOR}`);
-      }
-    };
-    fetchMinViews();
-  }, []);
+  /* No fetch on mount: the starting value is always the platform floor, so
+     one account can never inherit (or influence) another's choice. */
 
   // Load the admin-managed panel configuration. This tells us which
   // engagement types the admin has enabled.
@@ -390,17 +380,15 @@ export function NewOrderPage({
     setSeed((current) => current + 1);
   };
 
+  /* Local to this order only. It used to be POSTed to a shared server
+     setting, which meant one customer raising it silently re-planned every
+     other customer's orders. */
   const handleMinViewsChange = (value: number) => {
     // Clamp here as well as in the input, so typing "5" can't slip through.
     const newValue = Math.max(MIN_VIEWS_FLOOR, Math.floor(Number(value) || 0));
     setMinViewsPerRun(newValue);
     setUseClonedPlan(false);
     setSeed((current) => current + 1);
-    fetch(`${BACKEND_BASE_URL}/api/settings/min-views`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ minViewsPerRun: newValue }),
-    }).catch(() => console.warn("Could not update min views setting on backend"));
   };
 
   const deliveryOptions: DeliveryOption[] = [
@@ -679,20 +667,11 @@ export function NewOrderPage({
                 </p>
               ) : (
                 <>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                      {panelConfig.panelCount > 1 ? "Providers" : "Provider"}
-                    </span>
-                    {/* Provider names are owner-only: telling a customer which
-                        panel you resell from invites them to buy direct. */}
-                    <span className="truncate text-xs font-extrabold text-slate-900">
-                      {panelConfig.panels.length > 0
-                        ? panelConfig.panels.map((p) => p.name).join(" · ")
-                        : panelConfig.panelCount > 0
-                        ? `${panelConfig.panelCount} connected`
-                        : "Configured"}
-                    </span>
-                  </div>
+                  {/* Which provider serves an order is our business, not the
+                      customer's — only the available services are shown. */}
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    Available
+                  </span>
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {(["views", "likes", "shares", "saves", "comments", "reposts"] as const)
                       .filter((k) => enabled[k])
@@ -701,17 +680,7 @@ export function NewOrderPage({
                         return (
                           <span
                             key={k}
-                            title={
-                              info.slots.length > 0
-                                ? info.rotating
-                                  ? `Rotates across ${info.count} services: ${info.slots
-                                      .map((s) => `${s.serviceId} (${s.panelName})`)
-                                      .join(", ")}`
-                                  : `Service ${info.slots[0]?.serviceId} on ${info.slots[0]?.panelName}`
-                                : info.rotating
-                                ? `Delivered across ${info.count} providers`
-                                : "Available"
-                            }
+                            title={info.rotating ? `Delivered across ${info.count} sources` : "Available"}
                             className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
                           >
                             {k}
