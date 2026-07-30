@@ -658,45 +658,22 @@ export function NewOrderPage({
               )}
             </div>
 
-            {/* Panel is configured by the admin — users just see what's available. */}
-            <div className="rounded-lg border-2 border-slate-200 bg-slate-50 px-3 py-2.5">
-              {panelConfigError ? (
-                <p className="text-xs font-bold text-rose-700">{panelConfigError}</p>
-              ) : !panelConfig ? (
-                <p className="text-xs font-bold text-slate-500">Loading panel…</p>
-              ) : !panelConfig.configured ? (
-                <p className="text-xs font-bold text-amber-700">
-                  No SMM panel configured yet. Ask the administrator to set one up.
-                </p>
-              ) : (
-                <>
-                  {/* Which provider serves an order is our business, not the
-                      customer's — only the available services are shown. */}
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                    Available
-                  </span>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {(["views", "likes", "shares", "saves", "comments", "reposts"] as const)
-                      .filter((k) => enabled[k])
-                      .map((k) => {
-                        const info = panelConfig.services[k];
-                        return (
-                          <span
-                            key={k}
-                            title={info.rotating ? `Delivered across ${info.count} sources` : "Available"}
-                            className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700"
-                          >
-                            {k}
-                            {info.rotating && (
-                              <span className="ml-1 text-indigo-700">×{info.count}</span>
-                            )}
-                          </span>
-                        );
-                      })}
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Only surfaced when something is wrong or still loading. Once a
+                panel is configured this stays silent — the service list and
+                rotation counts are internal detail, not customer-facing. */}
+            {(panelConfigError || !panelConfig || !panelConfig.configured) && (
+              <div className="rounded-lg border-2 border-slate-200 bg-slate-50 px-3 py-2.5">
+                {panelConfigError ? (
+                  <p className="text-xs font-bold text-rose-700">{panelConfigError}</p>
+                ) : !panelConfig ? (
+                  <p className="text-xs font-bold text-slate-500">Loading…</p>
+                ) : (
+                  <p className="text-xs font-bold text-amber-700">
+                    No SMM panel configured yet. Ask the administrator to set one up.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </Card>
 
