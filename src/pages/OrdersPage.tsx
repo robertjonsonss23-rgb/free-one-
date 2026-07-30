@@ -74,16 +74,40 @@ function getRealStatus(order: CreatedOrder): string {
   return "running";
 }
 
-function BackendRunTable({ runs }: { runs: BackendRunInfo[] }) {
-  const labelColors: Record<string, string> = {
-    VIEWS: "text-indigo-700 bg-indigo-50",
-    LIKES: "text-pink-700 bg-pink-50",
-    SHARES: "text-sky-700 bg-sky-50",
-    SAVES: "text-violet-700 bg-violet-50",
-    REPOSTS: "text-cyan-700 bg-cyan-50",
-    COMMENTS: "text-emerald-700 bg-emerald-50",
-  };
+/* The backend returns one row per (service, time). Users think in terms of
+   "at 6pm I get 2000 views and 40 likes", so pivot those rows into a grid:
+   one row per scheduled time, one column per service actually ordered. */
+const SERVICE_COLUMNS = [
+  { key: "VIEWS",    label: "Views" },
+  { key: "LIKES",    label: "Likes" },
+  { key: "SHARES",   label: "Shares" },
+  { key: "SAVES",    label: "Saves" },
+  { key: "REPOSTS",  label: "Reposts" },
+  { key: "COMMENTS", label: "Comments" },
+] as const;
 
+/* Runs for different services are scheduled a few seconds apart, so exact
+   timestamps would split one logical batch across several rows. Rounding to
+   the minute groups them the way a user reads the schedule. */
+function timeBucket(iso: string): number {
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? Math.floor(t / 60000) * 60000 : 0;
+}
+
+/* One status for a whole row. Worst case wins, so a row is only "completed"
+   when every service in it is done — never overstate progress. */
+function combineStatuses(statuses: string[]): string {
+  if (statuses.length === 0) return "pending";
+  const has = (s: string) => statuses.includes(s);
+  if (statuses.every((s) => s === "cancelled")) return "cancelled";
+  if (has("failed")) return "failed";
+  if (has("processing")) return "processing";
+  if (has("pending") || has("paused") || has("queued")) return "pending";
+  if (statuses.every((s) => s === "completed")) return "completed";
+  return statuses[0];
+}
+
+function BackendRunTable({ runs }: { runs: BackendRunInfo[] }) {
   const statusKind: Record<string, any> = {
     completed: "completed",
     failed: "failed",
@@ -94,70 +118,108 @@ function BackendRunTable({ runs }: { runs: BackendRunInfo[] }) {
     paused: "paused",
   };
 
+  const { rows, columns } = useMemo(() => {
+    const buckets = new Map<
+      number,
+      { time: string; quantities: Record<string, number>; statuses: string[]; errors: string[] }
+    >();
+    const seen = new Set<string>();
+
+    for (const run of runs || []) {
+      if (!run) continue;
+      const label = String(run.label || "").toUpperCase();
+      const bucket = timeBucket(run.time);
+      seen.add(label);
+
+      let entry = buckets.get(bucket);
+      if (!entry) {
+        entry = { time: run.time, quantities: {}, statuses: [], errors: [] };
+        buckets.set(bucket, entry);
+      }
+      // Same service twice in one minute: add them up rather than overwrite.
+      entry.quantities[label] = (entry.quantities[label] || 0) + (Number(run.quantity) || 0);
+      entry.statuses.push(String(run.status || "pending"));
+      if (run.error) entry.errors.push(run.error);
+    }
+
+    // Only show a column the customer actually ordered.
+    const columns = SERVICE_COLUMNS.filter((c) => seen.has(c.key));
+
+    const rows = [...buckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([bucket, entry]) => ({
+        key: bucket,
+        time: entry.time,
+        quantities: entry.quantities,
+        status: combineStatuses(entry.statuses),
+        error: entry.errors[0] || null,
+      }));
+
+    return { rows, columns };
+  }, [runs]);
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center">
+        <p className="text-sm text-slate-500">No run data available.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
         <thead>
           <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider">
-            <th className="pb-2 pr-3 font-medium">Type</th>
-            <th className="pb-2 pr-3 font-medium">Qty</th>
-            <th className="pb-2 pr-3 font-medium">Scheduled</th>
-            <th className="pb-2 pr-3 font-medium">Status</th>
-            <th className="pb-2 pr-3 font-medium">SMM ID</th>
-            <th className="pb-2 font-medium">Executed</th>
+            <th className="pb-2 pr-3 font-medium">Time</th>
+            {columns.map((c) => (
+              <th key={c.key} className="pb-2 pr-3 text-right font-medium">
+                {c.label}
+              </th>
+            ))}
+            <th className="pb-2 font-medium">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {runs.map((run, index) => {
-            const safeRun = run || {};
-            const scheduledTime = safeRun.time ? new Date(safeRun.time) : null;
-            const executedTime = safeRun.executedAt ? new Date(safeRun.executedAt) : null;
-            const isCompleted = safeRun.status === "completed";
-            const quantity = typeof safeRun.quantity === "number" ? safeRun.quantity : 0;
-            const runLabel = safeRun.label || "UNKNOWN";
-
+          {rows.map((row) => {
+            const scheduled = row.time ? new Date(row.time) : null;
+            const validTime = scheduled && !isNaN(scheduled.getTime());
             return (
-              <tr key={`${safeRun.id ?? index}-${index}`} className="hover:bg-slate-50">
-                <td className="py-2 pr-3">
-                  <span className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold ${labelColors[runLabel] || "text-slate-600 bg-slate-100"}`}>
-                    {runLabel}
-                  </span>
-                </td>
-                <td className="py-2 pr-3 text-slate-900 font-mono tabular-nums">{quantity.toLocaleString()}</td>
+              <tr key={row.key} className="hover:bg-slate-50">
                 <td className="py-2 pr-3 text-slate-600">
-                  {scheduledTime && !isNaN(scheduledTime.getTime()) ? (
-                    <span title={scheduledTime.toLocaleString()}>
-                      {scheduledTime.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                      <span className="block text-[10px] text-slate-400">{scheduledTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  {validTime ? (
+                    <span title={scheduled!.toLocaleString()}>
+                      {scheduled!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      <span className="block text-[10px] text-slate-400">
+                        {scheduled!.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
                     </span>
                   ) : (
                     <span className="text-slate-400">—</span>
                   )}
                 </td>
-                <td className="py-2 pr-3">
-                  <StatusPill kind={statusKind[safeRun.status] || "pending"} className="capitalize">
-                    {safeRun.status || "pending"}
-                  </StatusPill>
-                  {safeRun.error && (
-                    <span className="block text-rose-600 text-[10px] mt-0.5 max-w-[150px] truncate" title={safeRun.error}>
-                      {safeRun.error}
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 pr-3">
-                  {isCompleted && safeRun.smmOrderId ? (
-                    <span className="font-mono text-emerald-600">#{safeRun.smmOrderId}</span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
+                {columns.map((c) => {
+                  const value = row.quantities[c.key];
+                  return (
+                    <td
+                      key={c.key}
+                      className="py-2 pr-3 text-right font-mono tabular-nums text-slate-900"
+                    >
+                      {value ? value.toLocaleString() : <span className="text-slate-300">—</span>}
+                    </td>
+                  );
+                })}
                 <td className="py-2">
-                  {executedTime && !isNaN(executedTime.getTime()) ? (
-                    <span className="text-slate-600 text-[11px]">
-                      {executedTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  <StatusPill kind={statusKind[row.status] || "pending"} className="capitalize">
+                    {row.status}
+                  </StatusPill>
+                  {row.error && (
+                    <span
+                      className="mt-0.5 block max-w-[150px] truncate text-[10px] text-rose-600"
+                      title={row.error}
+                    >
+                      {row.error}
                     </span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
                   )}
                 </td>
               </tr>
@@ -765,10 +827,6 @@ function OrderDetailPopup({
 
           {/* Metadata */}
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-xs text-slate-500 mb-1">API</p>
-              <p className="font-medium text-slate-900">{order.selectedAPI || "—"}</p>
-            </div>
             <div className="rounded-lg bg-slate-50 p-3">
               <p className="text-xs text-slate-500 mb-1">Bundle</p>
               <p className="font-medium text-slate-900">{order.selectedBundle || "—"}</p>
