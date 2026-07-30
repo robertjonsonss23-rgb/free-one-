@@ -10,7 +10,9 @@ import type {
   QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
-import { createSmmOrder, fetchPanelConfig, fetchQuote, BACKEND_BASE_URL, type PanelConfig, type QuoteResult } from "../utils/api"; 
+import { createSmmOrder, fetchPanelConfig, fetchQuote, BACKEND_BASE_URL, type PanelConfig, type QuoteResult,
+  MIN_VIEWS_FLOOR,
+} from "../utils/api"; 
 import { createPatternPlan } from "../utils/patterns";
 import {
   Button,
@@ -129,7 +131,7 @@ export function NewOrderPage({
   const [postUrl, setPostUrl] = useState(prefillOrder?.link ?? "");
   const [bulkLinks, setBulkLinks] = useState("");
   const [totalViews, setTotalViews] = useState(prefillOrder?.totalViews ?? 50000);
-  const [minViewsPerRun, setMinViewsPerRun] = useState(10);
+  const [minViewsPerRun, setMinViewsPerRun] = useState(MIN_VIEWS_FLOOR);
   const [panelConfig, setPanelConfig] = useState<PanelConfig | null>(null);
   const [panelConfigError, setPanelConfigError] = useState("");
   const [quote, setQuote] = useState<QuoteResult | null>(null);
@@ -160,11 +162,12 @@ export function NewOrderPage({
         if (response.ok) {
           const data = await response.json();
           if (data.minViewsPerRun) {
-            setMinViewsPerRun(data.minViewsPerRun);
+            // Never drop below the floor, even if an old value is stored.
+            setMinViewsPerRun(Math.max(MIN_VIEWS_FLOOR, Number(data.minViewsPerRun)));
           }
         }
       } catch (error) {
-        console.warn("Could not fetch min views setting, using default 10");
+        console.warn(`Could not fetch min views setting, using default ${MIN_VIEWS_FLOOR}`);
       }
     };
     fetchMinViews();
@@ -388,7 +391,8 @@ export function NewOrderPage({
   };
 
   const handleMinViewsChange = (value: number) => {
-    const newValue = Math.max(1, Math.floor(value));
+    // Clamp here as well as in the input, so typing "5" can't slip through.
+    const newValue = Math.max(MIN_VIEWS_FLOOR, Math.floor(Number(value) || 0));
     setMinViewsPerRun(newValue);
     setUseClonedPlan(false);
     setSeed((current) => current + 1);
@@ -603,8 +607,14 @@ export function NewOrderPage({
                   type="number"
                   value={minViewsPerRun}
                   onChange={(e) => handleMinViewsChange(Number(e.target.value))}
-                  min={1}
+                  onBlur={(e) => {
+                    // A cleared or too-small field snaps back to the floor.
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < MIN_VIEWS_FLOOR) handleMinViewsChange(MIN_VIEWS_FLOOR);
+                  }}
+                  min={MIN_VIEWS_FLOOR}
                   max={10000}
+                  step={10}
                   className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 tabular-nums focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 focus:outline-none transition"
                 />
               </div>
