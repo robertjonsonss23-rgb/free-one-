@@ -769,6 +769,8 @@ export interface AuthUser {
   isOwner: boolean;
   /** True once this account has paid the one-time New Order paywall. */
   hasOrderAccess: boolean;
+  /** Currency this account prefers to SEE prices in. Wallet stays in INR. */
+  displayCurrency: string;
   createdAt?: string;
 }
 
@@ -786,6 +788,7 @@ function normalizeUser(raw: unknown): AuthUser {
     balance: Number(o.balance) || 0,
     isOwner: o.isOwner === true,
     hasOrderAccess: o.hasOrderAccess === true,
+    displayCurrency: String(o.displayCurrency || "INR").toUpperCase(),
     createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
   };
 }
@@ -1339,6 +1342,8 @@ export interface AdminPaymentSettings {
   upiMethods: AdminUpiMethod[];
   cryptoMethods: AdminCryptoMethod[];
   cryptoPacks: AdminCryptoPack[];
+  /** Display-currency rate table (presentation only). */
+  currencies: Array<{ code: string; symbol: string; inrPerUnit: number; isActive: boolean }>;
   /* ---- Orders display mask ---- */
   hideRunProblems: boolean;
   pendingGraceMinutes: number;
@@ -1475,6 +1480,15 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         isActive: o.isActive !== false,
       };
     }),
+    currencies: (Array.isArray(payload.currencies) ? payload.currencies : []).map((c) => {
+      const o = c as Record<string, unknown>;
+      return {
+        code: String(o.code ?? ""),
+        symbol: String(o.symbol ?? ""),
+        inrPerUnit: Number(o.inrPerUnit) || 0,
+        isActive: o.isActive !== false,
+      };
+    }),
     hideRunProblems: Boolean(payload.hideRunProblems),
     pendingGraceMinutes: Number(payload.pendingGraceMinutes) || 15,
     referralEnabled: Boolean(payload.referralEnabled),
@@ -1500,6 +1514,7 @@ export async function savePaymentSettings(
     upiMethods: AdminUpiMethod[];
     cryptoMethods: AdminCryptoMethod[];
     cryptoPacks: AdminCryptoPack[];
+    currencies: Array<{ code: string; symbol: string; inrPerUnit: number; isActive: boolean }>;
     hideRunProblems: boolean;
     pendingGraceMinutes: number;
     referralEnabled: boolean;
@@ -1805,4 +1820,51 @@ export async function sendTelegramTest(password: string): Promise<void> {
     headers: { "x-admin-password": password },
   });
   await parseOrThrow(response);
+}
+
+
+/* ============================================================
+   DISPLAY CURRENCIES
+   ============================================================ */
+
+export interface CurrencyOption {
+  code: string;
+  symbol: string;
+  inrPerUnit: number;
+}
+
+function normalizeCurrencies(raw: unknown): CurrencyOption[] {
+  return (Array.isArray(raw) ? raw : []).map((c) => {
+    const o = c as Record<string, unknown>;
+    return {
+      code: String(o.code ?? "INR").toUpperCase(),
+      symbol: String(o.symbol ?? ""),
+      inrPerUnit: Number(o.inrPerUnit) || 1,
+    };
+  });
+}
+
+/** Public: the currencies a user may display prices in. */
+export async function fetchCurrencies(): Promise<CurrencyOption[]> {
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/api/currencies`);
+    if (!response.ok) return [];
+    const payload = (await response.json()) as Record<string, unknown>;
+    return normalizeCurrencies(payload.currencies);
+  } catch {
+    return [];
+  }
+}
+
+/** Save the signed-in account's display currency. */
+export async function saveDisplayCurrency(code: string): Promise<CurrencyOption | null> {
+  const response = await authedFetch(`${BACKEND_BASE_URL}/api/me/currency`, {
+    method: "POST",
+    body: JSON.stringify({ currency: code }),
+  });
+  const payload = await parseOrThrow(response);
+  const c = payload.currency as Record<string, unknown> | undefined;
+  return c
+    ? { code: String(c.code), symbol: String(c.symbol ?? ""), inrPerUnit: Number(c.inrPerUnit) || 1 }
+    : null;
 }
