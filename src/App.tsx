@@ -21,8 +21,10 @@ import {
 } from "./utils/api";
 import { Button, Spinner } from "./components/ui";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { CurrencyPicker } from "./components/CurrencyPicker";
 import type { Theme } from "./utils/theme";
 import { cn } from "./utils/cn";
+import { formatMoney, useCurrency } from "./utils/currency";
 
 type NavKey =
   | "dashboard"
@@ -149,6 +151,8 @@ interface AppProps {
 }
 
 export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps) {
+  // Re-render when the user switches display currency.
+  useCurrency();
   const [activePage, setActivePage] = useState<NavKey>(() => {
     const saved = localStorage.getItem("dev-smm-active-page");
     if (
@@ -633,6 +637,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
               <p className="text-[11px] text-slate-500">Every 5 minutes</p>
             </div>
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            <CurrencyPicker />
             <button
               type="button"
               onClick={() => navigateToPage("wallet")}
@@ -642,7 +647,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
                 Wallet
               </p>
               <p className="text-sm font-extrabold tabular-nums text-emerald-900">
-                ₹{balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {formatMoney(balance)}
               </p>
             </button>
             <div className="rounded-lg bg-indigo-50 px-3 py-2">
