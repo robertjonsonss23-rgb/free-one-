@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RunTable } from "../components/RunTable";
+import { formatMoney, formatMoneyShort, useCurrency } from "../utils/currency";
 import type {
   CreatedOrder,
   DeliveryOption,
@@ -89,6 +90,8 @@ export function NewOrderPage({
   onNavigateToWallet,
   onBalanceChange,
 }: NewOrderPageProps) {
+  // Re-render when the user switches display currency.
+  useCurrency();
   // Baseline comes from the Ratios page; the sliders below let the user
   // tune this one order without changing their saved preset.
   const baseRatios = activeRatios ?? DEFAULT_ENGAGEMENT_RATIOS;
@@ -1041,37 +1044,37 @@ export function NewOrderPage({
                     Estimated cost
                   </span>
                   <span className="text-2xl sm:text-3xl font-extrabold text-indigo-700 tabular-nums">
-                    ₹{quote.total.toFixed(2)}
+                    {formatMoney(quote.total)}
                   </span>
                   <div className="flex flex-wrap gap-1">
                     {quote.breakdown.views != null && (
                       <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        Views ₹{quote.breakdown.views.toFixed(0)}
+                        Views {formatMoneyShort(quote.breakdown.views)}
                       </span>
                     )}
                     {quote.breakdown.likes != null && (
                       <span className="inline-flex items-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-                        ❤️ ₹{quote.breakdown.likes.toFixed(0)}
+                        ❤️ {formatMoneyShort(quote.breakdown.likes)}
                       </span>
                     )}
                     {quote.breakdown.shares != null && (
                       <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                        🔁 ₹{quote.breakdown.shares.toFixed(0)}
+                        🔁 {formatMoneyShort(quote.breakdown.shares)}
                       </span>
                     )}
                     {quote.breakdown.saves != null && (
                       <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
-                        🔖 ₹{quote.breakdown.saves.toFixed(0)}
+                        🔖 {formatMoneyShort(quote.breakdown.saves)}
                       </span>
                     )}
                     {quote.breakdown.reposts != null && (
                       <span className="inline-flex items-center rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
-                        📢 ₹{quote.breakdown.reposts.toFixed(0)}
+                        📢 {formatMoneyShort(quote.breakdown.reposts)}
                       </span>
                     )}
                     {quote.breakdown.comments != null && (
                       <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                        💬 ₹{quote.breakdown.comments.toFixed(0)}
+                        💬 {formatMoneyShort(quote.breakdown.comments)}
                       </span>
                     )}
                   </div>
@@ -1086,9 +1089,9 @@ export function NewOrderPage({
                         <span className="mr-1 rounded bg-amber-200 px-1 py-0.5 text-[9px] uppercase">
                           Owner
                         </span>
-                        Panel cost ₹{quote.owner.panelCost.toFixed(2)} · Commission{" "}
+                        Panel cost {formatMoney(quote.owner.panelCost)} · Commission{" "}
                         <span className="text-emerald-700">
-                          ₹{quote.owner.commission.toFixed(2)}
+                          {formatMoney(quote.owner.commission)}
                         </span>{" "}
                         ({quote.owner.markupPercent}% markup)
                       </p>
@@ -1154,7 +1157,7 @@ export function NewOrderPage({
                                         : `${sl.rate}${sl.currency !== "INR" ? ` ${sl.currency}` : ""}`}
                                     </td>
                                     <td className="text-right font-mono tabular-nums font-bold text-amber-900">
-                                      {sl.priced ? `₹${sl.cost.toFixed(2)}` : "no rate"}
+                                      {sl.priced ? formatMoney(sl.cost) : "no rate"}
                                     </td>
                                   </tr>
                                 ))}
@@ -1175,12 +1178,12 @@ export function NewOrderPage({
                   <div className="w-full">
                     {quote.sufficient ? (
                       <p className="text-[10px] font-bold text-emerald-700">
-                        Wallet ₹{quote.balance.toFixed(2)} → ₹{(quote.balance - quote.total).toFixed(2)} after this order
+                        Wallet {formatMoney(quote.balance)} → {formatMoney(quote.balance - quote.total)} after this order
                       </p>
                     ) : (
                       <p className="text-[10px] font-bold text-rose-700">
-                        Not enough balance — you have ₹{quote.balance.toFixed(2)}, need ₹
-                        {(quote.total - quote.balance).toFixed(2)} more.{" "}
+                        Not enough balance — you have {formatMoney(quote.balance)}, need{" "}
+                        {formatMoney(quote.total - quote.balance)} more.{" "}
                         <button
                           type="button"
                           onClick={() => onNavigateToWallet?.()}
@@ -1254,8 +1257,8 @@ export function NewOrderPage({
                 }
                 if (quote?.available && !quote.sufficient) {
                   setCreateError(
-                    `Not enough wallet balance. This order costs ₹${quote.total.toFixed(2)} ` +
-                    `but you have ₹${quote.balance.toFixed(2)}. Add money from the Wallet page.`
+                    `Not enough wallet balance. This order costs ${formatMoney(quote.total)} ` +
+                    `but you have ${formatMoney(quote.balance)}. Add money from the Wallet page.`
                   );
                   return;
                 }
