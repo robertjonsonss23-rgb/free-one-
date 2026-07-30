@@ -326,7 +326,7 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
                 runCurrentTimes={order.runCurrentTimes || []}
                 runReasons={order.runReasons || []}
                 runActualExecutedTimes={order.runActualExecutedTimes || []}
-                mode="logs"
+                mode="customer"
               />
             </div>
           </motion.div>
