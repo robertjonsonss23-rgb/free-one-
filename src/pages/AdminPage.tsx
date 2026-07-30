@@ -456,7 +456,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     patchPayment({
       cryptoMethods: [
         ...(payment?.cryptoMethods ?? []),
-        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", qrImage: "", isActive: true, coin: "USDT" },
+        { id: `crypto-${Date.now()}`, label: "", network: "", address: "", instructions: "", qrImage: "", isActive: true, coin: "USDT", inrPerUnit: 0 },
       ],
     });
 
@@ -1355,6 +1355,18 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                           onChange={(e) => patchCrypto(i, { coin: e.target.value.toUpperCase() })}
                           placeholder="USDT"
                           hint="Shown next to every crypto amount."
+                        />
+                        <Input
+                          label={`1 ${m.coin || "coin"} = ? ₹`}
+                          type="number"
+                          value={m.inrPerUnit || ""}
+                          onChange={(e) => patchCrypto(i, { inrPerUnit: Number(e.target.value) })}
+                          placeholder="83"
+                          hint={
+                            m.inrPerUnit > 0
+                              ? `Users type their own amount; 10 ${m.coin || "coin"} = ₹${(10 * m.inrPerUnit).toLocaleString("en-IN")}`
+                              : "Leave 0 to use the fixed top-up amounts below instead."
+                          }
                         />
                         <Input
                           label="Wallet address"
