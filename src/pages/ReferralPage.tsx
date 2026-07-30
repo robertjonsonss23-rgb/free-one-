@@ -1,14 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { formatMoney, useCurrency } from "../utils/currency";
 import { Button, Card, InfoBanner, Spinner, StatusPill } from "../components/ui";
 import { fetchReferral, type ReferralStatus } from "../utils/api";
-
-function formatMoney(value: number): string {
-  return `₹${value.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
 
 function formatDate(iso: string): string {
   if (!iso) return "—";
@@ -19,6 +13,8 @@ function formatDate(iso: string): string {
 }
 
 export function ReferralPage() {
+  // Re-render when the user switches display currency.
+  useCurrency();
   const [status, setStatus] = useState<ReferralStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
