@@ -369,6 +369,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         upiMethods: payment.upiMethods,
         cryptoMethods: payment.cryptoMethods,
         cryptoPacks: payment.cryptoPacks,
+        currencies: payment.currencies,
         hideRunProblems: payment.hideRunProblems,
         pendingGraceMinutes: payment.pendingGraceMinutes,
         referralEnabled: payment.referralEnabled,
@@ -1512,6 +1513,135 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     <Button variant="ghost" size="sm" onClick={addCryptoPack}>
                       + Add amount
                     </Button>
+                  </div>
+                </div>
+
+                {/* ---- Display currencies ---- */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Display currencies</h3>
+                  <p className="mt-0.5 mb-3 max-w-2xl text-sm text-slate-500">
+                    Lets a user view prices in their own currency. This is{" "}
+                    <strong>display only</strong> — wallets, deposits and your Telegram
+                    alerts all stay in ₹, so your bookkeeping is unchanged. Enter how many
+                    rupees <em>one unit</em> is worth.
+                  </p>
+
+                  <div className="space-y-2">
+                    {payment.currencies.map((cur, i) => (
+                      <div
+                        key={`${cur.code}-${i}`}
+                        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 p-3"
+                      >
+                        <div className="w-20">
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Code
+                          </label>
+                          <input
+                            value={cur.code}
+                            onChange={(e) =>
+                              patchPayment({
+                                currencies: payment.currencies.map((x, idx) =>
+                                  idx === i ? { ...x, code: e.target.value.toUpperCase() } : x
+                                ),
+                              })
+                            }
+                            placeholder="USD"
+                            className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-bold uppercase"
+                          />
+                        </div>
+                        <div className="w-20">
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Symbol
+                          </label>
+                          <input
+                            value={cur.symbol}
+                            onChange={(e) =>
+                              patchPayment({
+                                currencies: payment.currencies.map((x, idx) =>
+                                  idx === i ? { ...x, symbol: e.target.value } : x
+                                ),
+                              })
+                            }
+                            placeholder="$"
+                            className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="min-w-36 flex-1">
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            1 {cur.code || "unit"} = ? ₹
+                          </label>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={cur.inrPerUnit || ""}
+                            onChange={(e) =>
+                              patchPayment({
+                                currencies: payment.currencies.map((x, idx) =>
+                                  idx === i ? { ...x, inrPerUnit: Number(e.target.value) } : x
+                                ),
+                              })
+                            }
+                            placeholder="83"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="pb-2 text-[11px] text-slate-500">
+                          {cur.inrPerUnit > 0
+                            ? `₹1000 shows as ${cur.symbol || ""}${(1000 / cur.inrPerUnit).toFixed(2)}`
+                            : "set a rate"}
+                        </div>
+                        <label className="flex items-center gap-1.5 pb-2 text-xs font-medium text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={cur.isActive}
+                            onChange={(e) =>
+                              patchPayment({
+                                currencies: payment.currencies.map((x, idx) =>
+                                  idx === i ? { ...x, isActive: e.target.checked } : x
+                                ),
+                              })
+                            }
+                          />
+                          Live
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            patchPayment({
+                              currencies: payment.currencies.filter((_, idx) => idx !== i),
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        patchPayment({
+                          currencies: [
+                            ...payment.currencies,
+                            { code: "", symbol: "", inrPerUnit: 0, isActive: false },
+                          ],
+                        })
+                      }
+                    >
+                      + Add currency
+                    </Button>
+                  </div>
+
+                  <div className="mt-3">
+                    <InfoBanner kind="info">
+                      Rates are fixed numbers you maintain here — they don&apos;t update
+                      themselves. Review them when exchange rates move, or your prices
+                      will drift.
+                    </InfoBanner>
                   </div>
                 </div>
 
