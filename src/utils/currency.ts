@@ -42,12 +42,13 @@ export function fromInr(rupees: number): number {
   return active.inrPerUnit > 0 ? value / active.inrPerUnit : value;
 }
 
-/* Sub-unit currencies (PKR at ~0.3 INR) need no decimals to stay readable,
-   while USD/EUR do. Pick a sensible precision from the size of the number. */
+/* Show the real figure: paise only appear when they exist.
+   137.17 -> "137.17", 1500 -> "1,500". Never rounds money away, which the
+   old size-based rule did (₹137.17 was rendering as "₹137"). */
 function decimalsFor(value: number): number {
-  const abs = Math.abs(value);
-  if (abs >= 1000) return 0;
-  return 2;
+  // Compare at 2dp so float noise like 99.99999999 counts as whole.
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? 0 : 2;
 }
 
 /**
@@ -64,7 +65,7 @@ export function formatMoney(rupees: number, opts?: { decimals?: number }): strin
   return `${active.symbol || active.code + " "}${shown}`;
 }
 
-/** Same, but never shows decimals — for compact stats and headings. */
+/** Rounded to whole units — only for headline stats where paise are noise. */
 export function formatMoneyShort(rupees: number): string {
   return formatMoney(rupees, { decimals: 0 });
 }
