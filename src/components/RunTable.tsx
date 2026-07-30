@@ -27,7 +27,7 @@ interface RunTableProps {
   runCurrentTimes?: string[];
   runReasons?: string[];
   runActualExecutedTimes?: (string | null)[];
-  mode?: "schedule" | "logs";
+  mode?: "schedule" | "logs" | "customer";
 }
 
 const STATUS_KIND: Record<ExtendedRunStatus, any> = {
@@ -134,6 +134,23 @@ export function RunTable({
   const safeRunCurrentTimes = runCurrentTimes || [];
   const safeRunReasons = runReasons || [];
   const safeRunActualExecutedTimes = runActualExecutedTimes || [];
+
+  /* Only show a service column the customer actually ordered — an all-zero
+     "Comments" column is noise. In customer mode the provider-side detail
+     (when we placed it, retry counts, error text) is dropped entirely. */
+  const METRICS = [
+    { key: "views"    as const, label: "Views",   width: "w-20" },
+    { key: "likes"    as const, label: "Likes",   width: "w-14" },
+    { key: "shares"   as const, label: "Shares",  width: "w-16" },
+    { key: "saves"    as const, label: "Saves",   width: "w-14" },
+    { key: "comments" as const, label: "Cmts",    width: "w-14" },
+    { key: "reposts"  as const, label: "Reposts", width: "w-16" },
+  ];
+  const showDiagnostics = mode !== "customer";
+  const activeMetrics = METRICS.filter((m) =>
+    // Views is the backbone of every order, so it always shows.
+    m.key === "views" || safeRuns.some((r) => Number(r?.[m.key] || 0) > 0)
+  );
 
   const getTimeDisplay = (index: number, originalRunTime: Date) => {
     const originalTime = safeRunOriginalTimes[index];
@@ -293,15 +310,18 @@ export function RunTable({
             <tr>
               <th className="px-3 py-2 w-12 font-medium">#</th>
               <th className="px-3 py-2 font-medium">Time</th>
-              <th className="px-3 py-2 w-20 font-medium">Views</th>
-              <th className="px-3 py-2 w-14 font-medium">Likes</th>
-              <th className="px-3 py-2 w-16 font-medium">Shares</th>
-              <th className="px-3 py-2 w-14 font-medium">Saves</th>
-              <th className="px-3 py-2 w-14 font-medium">Cmts</th>
-              <th className="px-3 py-2 w-16 font-medium">Reposts</th>
+              {activeMetrics.map((m) => (
+                <th key={m.key} className={`px-3 py-2 font-medium ${m.width}`}>
+                  {m.label}
+                </th>
+              ))}
               <th className="px-3 py-2 w-24 font-medium">Status</th>
-              <th className="px-3 py-2 w-32 font-medium">Placed At</th>
-              <th className="px-3 py-2 font-medium">Info</th>
+              {showDiagnostics && (
+                <>
+                  <th className="px-3 py-2 w-32 font-medium">Placed At</th>
+                  <th className="px-3 py-2 font-medium">Info</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -333,17 +353,28 @@ export function RunTable({
                       </div>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-slate-900 font-semibold tabular-nums">{(run.views || 0).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-slate-700 tabular-nums">{run.likes || 0}</td>
-                  <td className="px-3 py-2 text-slate-700 tabular-nums">{run.shares || 0}</td>
-                  <td className="px-3 py-2 text-slate-700 tabular-nums">{run.saves || 0}</td>
-                  <td className="px-3 py-2 text-slate-700 tabular-nums">{run.comments || 0}</td>
-                  <td className="px-3 py-2 text-slate-700 tabular-nums">{run.reposts || 0}</td>
+                  {activeMetrics.map((m) => {
+                    const value = Number(run[m.key] || 0);
+                    return (
+                      <td
+                        key={m.key}
+                        className={`px-3 py-2 tabular-nums ${
+                          m.key === "views"
+                            ? "font-semibold text-slate-900"
+                            : "text-slate-700"
+                        }`}
+                      >
+                        {value ? value.toLocaleString() : <span className="text-slate-300">—</span>}
+                      </td>
+                    );
+                  })}
                   <td className="px-3 py-2">
                     <StatusPill kind={STATUS_KIND[status]} className="capitalize">
                       {status}
                     </StatusPill>
                   </td>
+                  {showDiagnostics && (
+                  <>
                   <td className="px-3 py-2">
                     {(() => {
                       const actualTime = safeRunActualExecutedTimes[index];
@@ -408,6 +439,8 @@ export function RunTable({
                       <span className="text-slate-400">—</span>
                     )}
                   </td>
+                  </>
+                  )}
                 </tr>
               );
             })}
