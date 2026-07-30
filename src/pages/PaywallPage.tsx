@@ -229,6 +229,12 @@ export function PaywallPage({
             <p className="text-3xl font-extrabold leading-none text-[#ffffff]">
               {formatMoneyShort(price)}
             </p>
+            {/* Crypto buyers pay in coin, so show that figure up front too. */}
+            {cryptoPrice && (
+              <p className="mt-1 font-mono text-sm font-bold text-indigo-100">
+                = {cryptoPrice} {status?.cryptoCoin || "USDT"}
+              </p>
+            )}
             <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-100">
               Pay once
             </p>
