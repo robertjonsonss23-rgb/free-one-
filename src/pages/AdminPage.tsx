@@ -11,7 +11,7 @@ import {
 import type { ApiService } from "../types/order";
 import { ThemeToggle } from "../components/ThemeToggle";
 import type { Theme } from "../utils/theme";
-import {
+import { 
   fetchAdminPanelConfig,
   fetchAdminServices,
   addPanel,
