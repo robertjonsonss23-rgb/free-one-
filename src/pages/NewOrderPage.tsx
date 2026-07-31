@@ -15,10 +15,75 @@ import {
   createSmmOrder,
   fetchPanelConfig,
   fetchQuote,
+  PLATFORMS,
+  PLATFORM_LABELS,
+  PLATFORM_LINK_HINT,
+  DEFAULT_PLATFORM,
+  detectPlatformFromLink,
   type PanelConfig,
+  type Platform,
   type QuoteResult,
+  type ServiceLabel,
   MIN_VIEWS_FLOOR,
-} from "../utils/api"; 
+} from "../utils/api";
+
+/* ============================================================
+   PLATFORM ENGAGEMENT CHANNELS
+
+   The scheduling engine in patterns.ts distributes five engagement
+   channels across runs: likes, shares, saves, reposts, comments. Each
+   platform reuses those same five slots but labels them differently and
+   sends them to the provider under a different service name — TikTok's
+   "Followers" and YouTube's "Subscribers" ride on the `reposts` channel
+   because the maths (a percentage of views, spread over the run list) is
+   identical. `planKey` is the engine slot, `apiLabel` is what the backend
+   and the SMM panel call it. Nothing in patterns.ts had to change.
+   ============================================================ */
+type ChannelKey = "likes" | "shares" | "saves" | "reposts" | "comments";
+
+interface ChannelDef {
+  planKey: ChannelKey;
+  apiLabel: ServiceLabel;
+  label: string;
+  description: string;
+  emoji: string;
+  color: string;
+  accent: string;
+  max: number;      // slider ceiling, as a % of views
+  min: number;      // provider minimum for the whole order
+}
+
+const CH = {
+  likes:    { planKey: "likes",    apiLabel: "likes",    label: "Likes",    description: "Heart reactions",   emoji: "❤️", color: "pink",   accent: "accent-pink-600",   max: 25, min: 10 },
+  shares:   { planKey: "shares",   apiLabel: "shares",   label: "Shares",   description: "Forward to friends", emoji: "🔁", color: "sky",    accent: "accent-sky-600",    max: 15, min: 20 },
+  saves:    { planKey: "saves",    apiLabel: "saves",    label: "Saves",    description: "Bookmark posts",    emoji: "🔖", color: "violet", accent: "accent-violet-600", max: 10, min: 10 },
+  comments: { planKey: "comments", apiLabel: "comments", label: "Comments", description: "Custom text",       emoji: "💬", color: "amber",  accent: "accent-amber-600",  max: 2,  min: 1  },
+} satisfies Record<string, ChannelDef>;
+
+/* Brand tint for the selected platform button, matching the Admin tabs. */
+const PLATFORM_TONE: Record<Platform, string> = {
+  instagram: "border-pink-600 bg-pink-600",
+  tiktok: "border-slate-900 bg-slate-900",
+  youtube: "border-red-600 bg-red-600",
+};
+
+const PLATFORM_CHANNELS: Record<Platform, ChannelDef[]> = {
+  instagram: [
+    CH.likes, CH.shares, CH.saves,
+    { planKey: "reposts", apiLabel: "reposts", label: "Reposts", description: "Share to feed", emoji: "📢", color: "cyan", accent: "accent-cyan-600", max: 10, min: 10 },
+    CH.comments,
+  ],
+  tiktok: [
+    CH.likes, CH.shares, CH.saves,
+    { planKey: "reposts", apiLabel: "followers", label: "Followers", description: "New profile follows", emoji: "👤", color: "cyan", accent: "accent-cyan-600", max: 10, min: 10 },
+    CH.comments,
+  ],
+  youtube: [
+    CH.likes,
+    { planKey: "reposts", apiLabel: "subscribers", label: "Subscribers", description: "New channel subs", emoji: "🔔", color: "cyan", accent: "accent-cyan-600", max: 10, min: 10 },
+    CH.comments,
+  ],
+};
 import { createPatternPlan } from "../utils/patterns";
 import {
   Button,
@@ -137,6 +202,12 @@ export function NewOrderPage({
     : null;
 
   const [orderName, setOrderName] = useState(prefillOrder?.name && !prefillOrder.name.startsWith("Order #") ? prefillOrder.name : "");
+  /* One order targets exactly one platform. Re-ordering an old Instagram
+     order keeps it on Instagram; anything without a stored platform is
+     Instagram too, which is what every pre-upgrade order is. */
+  const [platform, setPlatform] = useState<Platform>(
+    (prefillOrder?.platform as Platform | undefined) ?? DEFAULT_PLATFORM
+  );
   const [postUrl, setPostUrl] = useState(prefillOrder?.link ?? "");
   const [bulkLinks, setBulkLinks] = useState("");
   const [totalViews, setTotalViews] = useState(prefillOrder?.totalViews ?? 50000);
@@ -186,20 +257,58 @@ export function NewOrderPage({
     return () => { cancelled = true; };
   }, []);
 
-  // A service is only orderable if the admin mapped at least one slot to it.
-  const enabled = useMemo(() => {
-    const svc = panelConfig?.services;
-    return {
-      views: Boolean(svc?.views?.enabled),
-      likes: Boolean(svc?.likes?.enabled),
-      shares: Boolean(svc?.shares?.enabled),
-      saves: Boolean(svc?.saves?.enabled),
-      comments: Boolean(svc?.comments?.enabled),
-      reposts: Boolean(svc?.reposts?.enabled),
-    };
-  }, [panelConfig]);
+  /* Which platforms the admin has actually mapped. A platform with no Views
+     service is not offered at all rather than failing at checkout. */
+  const livePlatforms = useMemo(
+    () => PLATFORMS.filter((p) => panelConfig?.platforms?.[p]?.configured),
+    [panelConfig]
+  );
 
-  // Never keep a toggle on for something the admin has disabled.
+  /* The engagement toggles for the selected platform. */
+  const channels = PLATFORM_CHANNELS[platform];
+
+  /* Lookup tables so the toggle UI can be generated from `channels` instead
+     of five hardcoded copies of the same button. */
+  const includeOf: Record<ChannelKey, boolean> = {
+    likes: includeLikes, shares: includeShares, saves: includeSaves,
+    reposts: includeReposts, comments: includeComments,
+  };
+  const setIncludeOf: Record<ChannelKey, (v: boolean) => void> = {
+    likes: setIncludeLikes, shares: setIncludeShares, saves: setIncludeSaves,
+    reposts: setIncludeReposts, comments: setIncludeComments,
+  };
+
+  /* Warn (never block) when the pasted link is clearly from another
+     platform — the usual cause of an order that silently does nothing. */
+  const linkMismatch = useMemo(() => {
+    const first = postUrl.trim() || bulkLinks.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "";
+    if (!first) return null;
+    const guess = detectPlatformFromLink(first);
+    return guess && guess !== platform ? guess : null;
+  }, [postUrl, bulkLinks, platform]);
+
+  /* A service is only orderable if the admin mapped a slot for it ON THIS
+     platform. Keyed by the engine's channel name so the toggles can look
+     themselves up directly. */
+  const enabled = useMemo(() => {
+    const svc = panelConfig?.platforms?.[platform]?.services;
+    const on = (label: ServiceLabel) => Boolean(svc?.[label]?.enabled);
+    const map: Record<"views" | ChannelKey, boolean> = {
+      views: on("views"),
+      likes: false, shares: false, saves: false, reposts: false, comments: false,
+    };
+    for (const c of PLATFORM_CHANNELS[platform]) map[c.planKey] = on(c.apiLabel);
+    return map;
+  }, [panelConfig, platform]);
+
+  /* If the saved platform is no longer offered, fall back to one that is,
+     so the page never sits in an unorderable state. */
+  useEffect(() => {
+    if (!panelConfig || livePlatforms.length === 0) return;
+    if (!livePlatforms.includes(platform)) setPlatform(livePlatforms[0]);
+  }, [panelConfig, livePlatforms, platform]);
+
+  // Never keep a toggle on for something unavailable on this platform.
   useEffect(() => {
     if (!panelConfig) return;
     if (!enabled.likes) setIncludeLikes(false);
@@ -472,25 +581,33 @@ export function NewOrderPage({
     const perRun = (pick: (r: (typeof safePlan.runs)[number]) => number) =>
       safePlan.runs.map((r) => Math.max(0, Math.floor(pick(r) || 0))).filter((n) => n > 0);
 
-    return {
-      views: safePlan.runs.map((r) => Math.max(Math.floor(r.views || 0), minViewsPerRun)),
-      likes: includeLikes ? perRun((r) => r.likes) : [],
-      shares: includeShares ? perRun((r) => r.shares) : [],
-      saves: includeSaves ? perRun((r) => r.saves) : [],
-      reposts: includeReposts ? perRun((r) => r.reposts) : [],
-      comments: includeComments ? perRun((r) => r.comments) : [],
+    const on: Record<ChannelKey, boolean> = {
+      likes: includeLikes, shares: includeShares, saves: includeSaves,
+      reposts: includeReposts, comments: includeComments,
     };
-  }, [safePlan.runs, minViewsPerRun, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
+
+    /* Keyed by API label, not by engine channel: on TikTok the `reposts`
+       channel must be priced as "followers", on YouTube as "subscribers". */
+    const out: Partial<Record<ServiceLabel, number[]>> = {
+      views: safePlan.runs.map((r) => Math.max(Math.floor(r.views || 0), minViewsPerRun)),
+    };
+    for (const c of channels) {
+      out[c.apiLabel] = on[c.planKey]
+        ? perRun((r) => Number((r as unknown as Record<string, number>)[c.planKey]))
+        : [];
+    }
+    return out;
+  }, [safePlan.runs, minViewsPerRun, channels, includeLikes, includeShares, includeSaves, includeReposts, includeComments]);
 
   useEffect(() => {
-    if (!panelConfig?.configured || quotePayload.views.length === 0) {
+    if (!enabled.views || !(quotePayload.views?.length)) {
       setQuote(null);
       return;
     }
     let cancelled = false;
     setQuoteLoading(true);
     const timer = setTimeout(() => {
-      fetchQuote(quotePayload)
+      fetchQuote(quotePayload, platform)
         .then((result) => { if (!cancelled) setQuote(result); })
         .catch(() => { if (!cancelled) setQuote(null); })
         .finally(() => { if (!cancelled) setQuoteLoading(false); });
@@ -501,7 +618,7 @@ export function NewOrderPage({
        effect sets it true again, and whichever request finally lands clears
        it — so the flag tracks the newest request, not the last render. */
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [quotePayload, panelConfig?.configured]);
+  }, [quotePayload, platform, enabled.views]);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-3 py-4 sm:px-5 sm:py-6">
@@ -636,14 +753,58 @@ export function NewOrderPage({
               </div>
             </div>
 
+            {/* ---- Platform picker ----
+                One order = one platform. Switching resets the engagement
+                toggles via the effect above, because the available services
+                differ per platform. Only platforms the admin has mapped
+                appear; a single live platform needs no choice at all. */}
+            {livePlatforms.length > 1 && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">Platform</label>
+                <div className="platform-picker grid grid-cols-3 gap-2">
+                  {livePlatforms.map((p) => {
+                    const active = platform === p;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          if (p === platform) return;
+                          setUseClonedPlan(false);
+                          setPlatform(p);
+                        }}
+                        aria-pressed={active}
+                        className={`rounded-lg border-2 px-2 py-2 text-xs font-bold transition ${
+                          active
+                            ? `${PLATFORM_TONE[p]} text-white shadow-md`
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        }`}
+                      >
+                        {PLATFORM_LABELS[p]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">Post URL</label>
               <input
                 value={postUrl}
                 onChange={(e) => setPostUrl(e.target.value)}
-                placeholder="https://instagram.com/reel/..."
+                placeholder={PLATFORM_LINK_HINT[platform]}
                 className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 focus:outline-none transition"
               />
+              {/* Soft warning only. The link is never rewritten and the order
+                  is not blocked — some providers accept short/redirect URLs
+                  we cannot recognise. */}
+              {linkMismatch && (
+                <p className="mt-1 text-[10px] font-bold text-amber-700">
+                  That looks like a {PLATFORM_LABELS[linkMismatch]} link, but{" "}
+                  {PLATFORM_LABELS[platform]} is selected.
+                </p>
+              )}
             </div>
 
             <div>
@@ -806,6 +967,7 @@ export function NewOrderPage({
             presetButtons={presetButtons}
             presetGroups={presetGroups}
             onApplyPreset={handleApplyPreset}
+            channels={channels}
           />
         </Card>
 
@@ -813,14 +975,21 @@ export function NewOrderPage({
         <Card padding="md" className="border-2 border-amber-200 shadow-md bg-white flex flex-col">
           <SectionTitle step="3" title="Engagement mix" description="Toggle engagement types" accent="amber" />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-          {[
-            { label: "Likes", description: "Heart reactions", active: includeLikes, toggle: () => { setUseClonedPlan(false); setIncludeLikes(!includeLikes); }, color: "pink", emoji: "❤️" },
-            { label: "Shares", description: "Forward to friends", active: includeShares, toggle: () => { setUseClonedPlan(false); setIncludeShares(!includeShares); }, color: "sky", emoji: "🔁" },
-            { label: "Saves", description: "Bookmark posts", active: includeSaves, toggle: () => { setUseClonedPlan(false); setIncludeSaves(!includeSaves); }, color: "violet", emoji: "🔖" },
-            { label: "Reposts", description: "Share to feed", active: includeReposts, toggle: () => { setUseClonedPlan(false); setIncludeReposts(!includeReposts); }, color: "cyan", emoji: "📢" },
-            { label: "Comments", description: "Custom text", active: includeComments, toggle: () => { setUseClonedPlan(false); setIncludeComments(!includeComments); }, color: "amber", emoji: "💬" },
-          ].map((btn) => {
+          <div className="engagement-toggles grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+          {/* Built from the platform's channel list, so YouTube shows
+              Subscribers instead of Reposts and drops Shares/Saves entirely.
+              A channel the admin has not mapped is hidden rather than shown
+              broken — the user can only pick what will actually deliver. */}
+          {channels.filter((c) => enabled[c.planKey]).map((c) => {
+            const active = includeOf[c.planKey];
+            const btn = {
+              label: c.label,
+              description: c.description,
+              active,
+              toggle: () => { setUseClonedPlan(false); setIncludeOf[c.planKey](!active); },
+              color: c.color,
+              emoji: c.emoji,
+            };
             const tones: Record<string, { bg: string; ring: string }> = {
               pink: { bg: "bg-pink-600", ring: "ring-pink-300" },
               sky: { bg: "bg-sky-600", ring: "ring-sky-300" },
@@ -834,6 +1003,7 @@ export function NewOrderPage({
                 key={btn.label}
                 type="button"
                 onClick={btn.toggle}
+                aria-pressed={btn.active}
                 className={`flex items-center justify-between gap-2 rounded-lg p-2.5 text-left transition-all ${
                   btn.active
                     ? `${t.bg} text-white shadow-md ring-2 ${t.ring}`
@@ -879,13 +1049,13 @@ export function NewOrderPage({
             </div>
 
             <div className="space-y-2.5">
-              {([
-                { key: "likes"    as const, label: "Likes",    emoji: "❤️", on: includeLikes,    max: 25, accent: "accent-pink-600" },
-                { key: "shares"   as const, label: "Shares",   emoji: "🔁", on: includeShares,   max: 15, accent: "accent-sky-600" },
-                { key: "saves"    as const, label: "Saves",    emoji: "🔖", on: includeSaves,    max: 10, accent: "accent-violet-600" },
-                { key: "reposts"  as const, label: "Reposts",  emoji: "📢", on: includeReposts,  max: 10, accent: "accent-cyan-600" },
-                { key: "comments" as const, label: "Comments", emoji: "💬", on: includeComments, max: 2,  accent: "accent-amber-600" },
-              ]).filter((row) => row.on).map((row) => {
+              {channels
+                .map((c) => ({
+                  key: c.planKey, label: c.label, emoji: c.emoji,
+                  on: includeOf[c.planKey] && enabled[c.planKey],
+                  max: c.max, accent: c.accent,
+                }))
+                .filter((row) => row.on).map((row) => {
                 const pct = effectiveRatios[row.key];
                 /* Show what the schedule will ACTUALLY deliver, not the raw
                    percentage. Each run is capped by its view band, so beyond a
@@ -1199,32 +1369,29 @@ export function NewOrderPage({
                     {totalViews.toLocaleString()}
                   </span>
                   <span className="text-xs font-bold text-slate-600">views</span>
+                  {/* Same channel list as the toggles, so the chip reads
+                      "🔔 1,200" for YouTube subscribers rather than a
+                      repost icon. */}
                   <div className="flex flex-wrap gap-1">
-                    {includeLikes && (
-                      <span className="inline-flex items-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-                        ❤️ {graphTotals.likes.toLocaleString()}
-                      </span>
-                    )}
-                    {includeShares && (
-                      <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                        🔁 {graphTotals.shares.toLocaleString()}
-                      </span>
-                    )}
-                    {includeSaves && (
-                      <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
-                        🔖 {graphTotals.saves.toLocaleString()}
-                      </span>
-                    )}
-                    {includeReposts && (
-                      <span className="inline-flex items-center rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">
-                        📢 {graphTotals.reposts.toLocaleString()}
-                      </span>
-                    )}
-                    {includeComments && (
-                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                        💬 {graphTotals.comments.toLocaleString()}
-                      </span>
-                    )}
+                    {channels.filter((c) => includeOf[c.planKey]).map((c) => {
+                      const chip: Record<string, string> = {
+                        pink: "bg-pink-100 text-pink-700",
+                        sky: "bg-sky-100 text-sky-700",
+                        violet: "bg-violet-100 text-violet-700",
+                        cyan: "bg-cyan-100 text-cyan-700",
+                        amber: "bg-amber-100 text-amber-700",
+                      };
+                      const n = (graphTotals as unknown as Record<string, number>)[c.planKey] || 0;
+                      return (
+                        <span
+                          key={c.apiLabel}
+                          title={c.label}
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${chip[c.color]}`}
+                        >
+                          {c.emoji} {n.toLocaleString()}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
@@ -1264,13 +1431,17 @@ export function NewOrderPage({
                 const invalidTarget = targets.find((target) => !isValidUrl(target));
                 if (invalidTarget) { setCreateError(`Invalid URL: ${invalidTarget.slice(0, 30)}...`); return; }
 
-                // Service ids live on the server; we only check the admin enabled them.
-                if (!enabled.views) { setCreateError("The admin has not configured a Views service."); return; }
-                if (includeLikes && !enabled.likes) { setCreateError("Likes are not available on this panel."); return; }
-                if (includeShares && !enabled.shares) { setCreateError("Shares are not available on this panel."); return; }
-                if (includeSaves && !enabled.saves) { setCreateError("Saves are not available on this panel."); return; }
-                if (includeReposts && !enabled.reposts) { setCreateError("Reposts are not available on this panel."); return; }
-                if (includeComments && !enabled.comments) { setCreateError("Comments are not available on this panel."); return; }
+                /* Service ids live on the server; we only check the admin
+                   enabled them FOR THIS PLATFORM. */
+                if (!enabled.views) {
+                  setCreateError(`${PLATFORM_LABELS[platform]} is not available yet — the admin has not mapped a Views service for it.`);
+                  return;
+                }
+                const offChannel = channels.find((c) => includeOf[c.planKey] && !enabled[c.planKey]);
+                if (offChannel) {
+                  setCreateError(`${offChannel.label} is not available for ${PLATFORM_LABELS[platform]}.`);
+                  return;
+                }
 
                 const quantity = (safePlan?.runs || []).reduce((acc, run) => acc + run.views, 0);
                 if (!Number.isFinite(quantity) || quantity <= 0) { setCreateError("Quantity must be > 0."); return; }
@@ -1282,11 +1453,20 @@ export function NewOrderPage({
                 const totalReposts = (safePlan?.runs || []).reduce((acc, run) => acc + (run.reposts || 0), 0);
                 const totalCommentsQty = (safePlan?.runs || []).reduce((acc, run) => acc + (run.comments || 0), 0);
 
-                if (includeLikes && totalLikes < 10) { setCreateError("Likes must be at least 10."); return; }
-                if (includeShares && totalShares < 20) { setCreateError("Shares must be at least 20."); return; }
-                if (includeSaves && totalSaves < 10) { setCreateError("Saves must be at least 10."); return; }
-                if (includeReposts && totalReposts < 10) { setCreateError("Reposts must be at least 10."); return; }
-                if (includeComments && totalCommentsQty <= 0) { setCreateError("Comments must be greater than 0."); return; }
+                /* Provider minimums, named after whatever this platform calls
+                   the channel ("Followers must be at least 10", not
+                   "Reposts must be at least 10"). */
+                const totalOf: Record<ChannelKey, number> = {
+                  likes: totalLikes, shares: totalShares, saves: totalSaves,
+                  reposts: totalReposts, comments: totalCommentsQty,
+                };
+                const tooSmall = channels.find(
+                  (c) => includeOf[c.planKey] && totalOf[c.planKey] < c.min
+                );
+                if (tooSmall) {
+                  setCreateError(`${tooSmall.label} must be at least ${tooSmall.min}.`);
+                  return;
+                }
                 if (quantity > 100000) { const proceed = window.confirm("Large mission. Continue?"); if (!proceed) return; }
 
                 const viewRuns = (safePlan?.runs || []).map((run) => ({
@@ -1314,22 +1494,28 @@ export function NewOrderPage({
                 });
                 const filteredCommentsRuns = commentsRuns.filter(run => run.comments && run.comments.length > 0);
 
-                // No serviceId / apiKey — the server resolves those from admin config.
-                const servicesPayload: {
-                  views: { runs: Array<{ time: string; quantity: number }> };
-                  likes?: { runs: Array<{ time: string; quantity: number }> };
-                  shares?: { runs: Array<{ time: string; quantity: number }> };
-                  saves?: { runs: Array<{ time: string; quantity: number }> };
-                  reposts?: { runs: Array<{ time: string; quantity: number }> };
-                  comments?: { runs: Array<{ time: string; comments: string }> };
-                } = { views: { runs: viewRuns } };
+                /* No serviceId / apiKey — the server resolves those from admin
+                   config. Keys are the platform's API labels, so the engine's
+                   `reposts` channel is sent as "followers" on TikTok and
+                   "subscribers" on YouTube. */
+                const runsOf: Record<ChannelKey, Array<{ time: string; quantity: number }>> = {
+                  likes: likesRuns, shares: sharesRuns, saves: savesRuns,
+                  reposts: repostsRuns, comments: [],
+                };
+                const servicesPayload: Record<
+                  string,
+                  { runs: Array<{ time: string; quantity?: number; comments?: string }> }
+                > = { views: { runs: viewRuns } };
 
-                if (includeLikes) servicesPayload.likes = { runs: likesRuns };
-                if (includeShares) servicesPayload.shares = { runs: sharesRuns };
-                if (includeSaves) servicesPayload.saves = { runs: savesRuns };
-                if (includeReposts) servicesPayload.reposts = { runs: repostsRuns };
-                if (includeComments && filteredCommentsRuns.length > 0) {
-                  servicesPayload.comments = { runs: filteredCommentsRuns };
+                for (const c of channels) {
+                  if (!includeOf[c.planKey]) continue;
+                  if (c.planKey === "comments") {
+                    if (filteredCommentsRuns.length > 0) {
+                      servicesPayload[c.apiLabel] = { runs: filteredCommentsRuns };
+                    }
+                    continue;
+                  }
+                  servicesPayload[c.apiLabel] = { runs: runsOf[c.planKey] };
                 }
 
                 setIsCreatingOrder(true);
@@ -1363,6 +1549,7 @@ export function NewOrderPage({
                       const result = await createSmmOrder({
                         name: orderName.trim() || undefined,
                         link: trimmedUrl,
+                        platform,
                         services: servicesPayload,
                       });
 
@@ -1375,6 +1562,7 @@ export function NewOrderPage({
                         schedulerOrderId: result.schedulerOrderId,
                         smmOrderId: result.orderId ?? "Scheduled",
                         link: trimmedUrl,
+                        platform,
                         totalViews: quantity,
                         startDelayHours,
                         patternType: safePlan.patternType,
@@ -1407,6 +1595,7 @@ export function NewOrderPage({
                         batchTotal: targets.length,
                         smmOrderId: "N/A",
                         link: trimmedUrl,
+                        platform,
                         totalViews: quantity,
                         startDelayHours,
                         patternType: safePlan.patternType,
@@ -1733,6 +1922,9 @@ interface SchedulePreviewIambatmanProps {
     items: Array<{ label: string; value: QuickPatternPreset; hint: string }>;
   }>;
   onApplyPreset?: (preset: QuickPatternPreset) => void;
+  /* The platform's engagement channels, so the summary cards name what this
+     platform actually sells (YouTube has no Shares). */
+  channels?: ChannelDef[];
 }
 
 function SchedulePreviewIambatman({
@@ -1741,6 +1933,7 @@ function SchedulePreviewIambatman({
   presetButtons,
   presetGroups,
   onApplyPreset,
+  channels = PLATFORM_CHANNELS[DEFAULT_PLATFORM],
 }: SchedulePreviewIambatmanProps) {
   const [expandedRuns, setExpandedRuns] = useState(false);
   const safeRuns = plan?.runs || [];
@@ -1764,12 +1957,18 @@ function SchedulePreviewIambatman({
 
   const chartData = useMemo(() => buildIambatmanChartData(plan), [plan]);
 
-  // 🎯 4 stat cards matching image EXACTLY
+  /* Views plus the first three channels this platform offers. Previously the
+     fourth card was hardcoded to "Shares", which YouTube does not sell at
+     all — it showed a permanent 0. */
+  const cardTints = ["border-blue-300", "border-cyan-300", "border-orange-300"];
   const statsCards = [
     { label: "Views", value: graphTotals.views, color: "border-pink-300", text: "text-stone-950" },
-    { label: "Likes", value: graphTotals.likes, color: "border-blue-300", text: "text-stone-950" },
-    { label: "Comments", value: graphTotals.comments, color: "border-cyan-300", text: "text-stone-950" },
-    { label: "Shares", value: graphTotals.shares, color: "border-orange-300", text: "text-stone-950" },
+    ...channels.slice(0, 3).map((c, i) => ({
+      label: c.label,
+      value: (graphTotals as unknown as Record<string, number>)[c.planKey] || 0,
+      color: cardTints[i],
+      text: "text-stone-950",
+    })),
   ];
 
   return (
@@ -1855,9 +2054,9 @@ function SchedulePreviewIambatman({
       )}
 
       {/* 🎯 Screenshot-style top metrics - EXACT match with image */}
-      <div className="mb-3 grid grid-cols-4 overflow-hidden rounded-xl border border-orange-200/70 bg-white/35 text-center shadow-inner shadow-white/40">
+      <div className="stat-cards mb-3 grid grid-cols-4 overflow-hidden rounded-xl border border-orange-200/70 bg-white/35 text-center shadow-inner shadow-white/40">
         {statsCards.map((item) => (
-          <div key={item.label} className={`border-b-2 ${item.color} px-2 py-2`}>
+          <div key={item.label} data-stat={item.label} className={`border-b-2 ${item.color} px-2 py-2`}>
             <div className="text-[10px] font-medium text-stone-500">{item.label}</div>
             <div className={`text-sm font-semibold ${item.text}`}>{compactNumber(item.value)}</div>
           </div>
