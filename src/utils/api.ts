@@ -1351,6 +1351,8 @@ export interface AdminPaymentSettings {
   cryptoPacks: AdminCryptoPack[];
   /** Display-currency rate table (presentation only). */
   currencies: Array<{ code: string; symbol: string; inrPerUnit: number; isActive: boolean }>;
+  /** Telegram alert fires below this rupee balance. 0 = off. */
+  lowBalanceThreshold: number;
   /* ---- Orders display mask ---- */
   hideRunProblems: boolean;
   pendingGraceMinutes: number;
@@ -1497,6 +1499,7 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
         isActive: o.isActive !== false,
       };
     }),
+    lowBalanceThreshold: Number(payload.lowBalanceThreshold) || 0,
     hideRunProblems: Boolean(payload.hideRunProblems),
     pendingGraceMinutes: Number(payload.pendingGraceMinutes) || 15,
     referralEnabled: Boolean(payload.referralEnabled),
@@ -1523,6 +1526,7 @@ export async function savePaymentSettings(
     cryptoMethods: AdminCryptoMethod[];
     cryptoPacks: AdminCryptoPack[];
     currencies: Array<{ code: string; symbol: string; inrPerUnit: number; isActive: boolean }>;
+    lowBalanceThreshold: number;
     hideRunProblems: boolean;
     pendingGraceMinutes: number;
     referralEnabled: boolean;
@@ -1879,4 +1883,66 @@ export async function saveDisplayCurrency(code: string): Promise<CurrencyOption 
   return c
     ? { code: String(c.code), symbol: String(c.symbol ?? ""), inrPerUnit: Number(c.inrPerUnit) || 1 }
     : null;
+}
+
+
+/* ============================================================
+   PANEL BALANCES (admin)
+   ============================================================ */
+
+export interface PanelBalance {
+  id: string;
+  name: string;
+  isActive: boolean;
+  /** Native figure the provider reported, or null if unreadable. */
+  balance: number | null;
+  currency: string;
+  /** Converted to rupees so panels can be compared. */
+  balanceInr: number | null;
+  ok: boolean;
+  error: string;
+  checkedAt: string;
+  isLow: boolean;
+}
+
+export async function fetchPanelBalances(
+  password: string,
+  refresh = false
+): Promise<{ threshold: number; panels: PanelBalance[] }> {
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/admin/panel-balances${refresh ? "?refresh=1" : ""}`,
+    { headers: { "x-admin-password": password } }
+  );
+  const payload = await parseOrThrow(response);
+  return {
+    threshold: Number(payload.threshold) || 0,
+    panels: (Array.isArray(payload.panels) ? payload.panels : []).map((p) => {
+      const o = p as Record<string, unknown>;
+      return {
+        id: String(o.id ?? ""),
+        name: String(o.name ?? ""),
+        isActive: o.isActive !== false,
+        balance: o.balance === null || o.balance === undefined ? null : Number(o.balance),
+        currency: String(o.currency ?? ""),
+        balanceInr:
+          o.balanceInr === null || o.balanceInr === undefined ? null : Number(o.balanceInr),
+        ok: o.ok === true,
+        error: String(o.error ?? ""),
+        checkedAt: String(o.checkedAt ?? ""),
+        isLow: o.isLow === true,
+      };
+    }),
+  };
+}
+
+/** Run the low-balance check immediately (also sends any due alerts). */
+export async function runBalanceCheck(
+  password: string
+): Promise<{ checked: number; alerted: number }> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/panel-balances/check`, {
+    method: "POST",
+    headers: { "x-admin-password": password },
+  });
+  const payload = await parseOrThrow(response);
+  return { checked: Number(payload.checked) || 0, alerted: Number(payload.alerted) || 0 };
 }
