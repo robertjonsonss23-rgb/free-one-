@@ -201,6 +201,9 @@ export interface BackendRunInfo {
 export interface CreatedOrder {
   id: string;
   name: string;
+  /** Which platform this order targets. Absent on pre-upgrade orders,
+      which are all Instagram. */
+  platform?: "instagram" | "tiktok" | "youtube";
   batchId?: string;
   batchIndex?: number;
   batchTotal?: number;
