@@ -8,11 +8,10 @@ import {
   Spinner,
   StatusPill,
 } from "../components/ui";
-import type { ApiService } from "../types/order"; 
+import type { ApiService } from "../types/order";
 import { ThemeToggle } from "../components/ThemeToggle";
 import type { Theme } from "../utils/theme";
 import {
-  SERVICE_LABELS,
   fetchAdminPanelConfig,
   fetchAdminServices,
   addPanel,
@@ -42,24 +41,35 @@ import {
   type AdminUpiMethod,
   type AdminCryptoMethod,
   type AdminCryptoPack,
+  PLATFORMS,
+  PLATFORM_LABELS,
+  PLATFORM_METRICS,
+  DEFAULT_PLATFORM,
+  emptyPlatformSlots,
   type AdminPanelConfig,
   type ServiceSlot,
   type ServiceLabel,
+  type Platform,
   type AdminUser,
 } from "../utils/api";
 
 const LABEL_META: Record<ServiceLabel, { title: string; hint: string; required?: boolean }> = {
-  views:    { title: "Views",    hint: "Required — drives the whole schedule", required: true },
-  likes:    { title: "Likes",    hint: "Optional" },
-  shares:   { title: "Shares",   hint: "Optional" },
-  saves:    { title: "Saves",    hint: "Optional" },
-  comments: { title: "Comments", hint: "Optional" },
-  reposts:  { title: "Reposts",  hint: "Optional" },
+  views:       { title: "Views",       hint: "Required — drives the whole schedule", required: true },
+  likes:       { title: "Likes",       hint: "Optional" },
+  shares:      { title: "Shares",      hint: "Optional" },
+  saves:       { title: "Saves",       hint: "Optional" },
+  comments:    { title: "Comments",    hint: "Optional" },
+  reposts:     { title: "Reposts",     hint: "Optional" },
+  followers:   { title: "Followers",   hint: "Optional" },
+  subscribers: { title: "Subscribers", hint: "Optional" },
 };
 
-function emptySlots(): Record<ServiceLabel, ServiceSlot[]> {
-  return { views: [], likes: [], shares: [], saves: [], comments: [], reposts: [] };
-}
+/* Small colour cue per platform so the three tabs are told apart at a glance. */
+const PLATFORM_ACCENT: Record<Platform, string> = {
+  instagram: "bg-pink-600",
+  tiktok: "bg-slate-900",
+  youtube: "bg-red-600",
+};
 
 interface AdminPageProps {
   theme: Theme;
@@ -74,7 +84,11 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [booting, setBooting] = useState(true);
 
   const [config, setConfig] = useState<AdminPanelConfig | null>(null);
-  const [slots, setSlots] = useState<Record<ServiceLabel, ServiceSlot[]>>(emptySlots());
+  /* Slots for every platform at once, so switching tabs keeps unsaved edits. */
+  const [slots, setSlots] = useState<Record<Platform, Record<ServiceLabel, ServiceSlot[]>>>(
+    emptyPlatformSlots()
+  );
+  const [platform, setPlatform] = useState<Platform>(DEFAULT_PLATFORM);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
 
@@ -103,7 +117,11 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [catalogueError, setCatalogueError] = useState("");
 
   // Service picker modal
-  const [picker, setPicker] = useState<{ label: ServiceLabel; index: number } | null>(null);
+  const [picker, setPicker] = useState<{
+    platform: Platform;
+    label: ServiceLabel;
+    index: number;
+  } | null>(null);
   const [pickerPanelId, setPickerPanelId] = useState("");
   const [search, setSearch] = useState("");
 
@@ -122,7 +140,13 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
 
   const applyConfig = useCallback((cfg: AdminPanelConfig) => {
     setConfig(cfg);
-    setSlots({ ...emptySlots(), ...cfg.serviceSlots });
+    const next = emptyPlatformSlots();
+    for (const p of PLATFORMS) {
+      for (const m of PLATFORM_METRICS[p]) {
+        next[p][m] = cfg.platformSlots?.[p]?.[m] ?? [];
+      }
+    }
+    setSlots(next);
   }, []);
 
   const loadConfig = useCallback(async (pw: string) => {
@@ -275,36 +299,56 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     }
   };
 
-  /* ---- Slots ---- */
-  const addSlot = (label: ServiceLabel) => {
+  /* ---- Slots ----
+     Every mutator is scoped to one platform, so editing TikTok can never
+     touch the Instagram mapping that is already live. */
+  const addSlot = (pf: Platform, label: ServiceLabel) => {
     const firstPanel = config?.panels.find((p) => p.isActive)?.id || "";
     setSlots((prev) => ({
       ...prev,
-      [label]: [...prev[label], { panelId: firstPanel, serviceId: "" }],
+      [pf]: {
+        ...prev[pf],
+        [label]: [...(prev[pf][label] || []), { panelId: firstPanel, serviceId: "" }],
+      },
     }));
   };
 
-  const removeSlot = (label: ServiceLabel, index: number) => {
+  const removeSlot = (pf: Platform, label: ServiceLabel, index: number) => {
     setSlots((prev) => ({
       ...prev,
-      [label]: prev[label].filter((_, i) => i !== index),
+      [pf]: {
+        ...prev[pf],
+        [label]: (prev[pf][label] || []).filter((_, i) => i !== index),
+      },
     }));
   };
 
-  const patchSlot = (label: ServiceLabel, index: number, patch: Partial<ServiceSlot>) => {
+  const patchSlot = (
+    pf: Platform,
+    label: ServiceLabel,
+    index: number,
+    patch: Partial<ServiceSlot>
+  ) => {
     setSlots((prev) => ({
       ...prev,
-      [label]: prev[label].map((s, i) => (i === index ? { ...s, ...patch } : s)),
+      [pf]: {
+        ...prev[pf],
+        [label]: (prev[pf][label] || []).map((s, i) => (i === index ? { ...s, ...patch } : s)),
+      },
     }));
   };
 
-  const handleSaveSlots = async () => {
-    if (slots.views.length === 0 || !slots.views.some((s) => s.serviceId.trim())) {
-      fireToast("danger", "At least one Views service is required.");
+  /* Saves only the platform currently on screen. The server merges, so the
+     other two platforms keep whatever they already had. */
+  const handleSaveSlots = async (pf: Platform) => {
+    const metrics = PLATFORM_METRICS[pf];
+    const views = slots[pf].views || [];
+    if (views.length === 0 || !views.some((s) => s.serviceId.trim())) {
+      fireToast("danger", `At least one Views service is required for ${PLATFORM_LABELS[pf]}.`);
       return;
     }
-    const incomplete = SERVICE_LABELS.some((label) =>
-      slots[label].some((s) => !s.panelId || !s.serviceId.trim())
+    const incomplete = metrics.some((label) =>
+      (slots[pf][label] || []).some((s) => !s.panelId || !s.serviceId.trim())
     );
     if (incomplete) {
       fireToast("danger", "Every slot needs a panel and a service ID.");
@@ -312,15 +356,17 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     }
     setSaving(true);
     try {
-      const payload = {} as Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>;
-      for (const label of SERVICE_LABELS) {
-        payload[label] = slots[label].map((s) => ({
+      const payload: Partial<
+        Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>
+      > = {};
+      for (const label of metrics) {
+        payload[label] = (slots[pf][label] || []).map((s) => ({
           panelId: s.panelId,
           serviceId: s.serviceId.trim(),
         }));
       }
-      applyConfig(await saveServiceSlots(password, payload));
-      fireToast("success", "Service mapping saved.");
+      applyConfig(await saveServiceSlots(password, payload, pf));
+      fireToast("success", `${PLATFORM_LABELS[pf]} mapping saved.`);
     } catch (e) {
       fireToast("danger", e instanceof Error ? e.message : "Save failed.");
     } finally {
@@ -756,6 +802,12 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   /* ---------------- DASHBOARD ---------------- */
   const activePanels = config?.panels.filter((p) => p.isActive) || [];
 
+  /* Which platforms users can actually order on right now. */
+  const livePlatformNames = PLATFORMS
+    .filter((pf) => config?.platformConfigured?.[pf])
+    .map((pf) => PLATFORM_LABELS[pf])
+    .join(", ");
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
@@ -827,7 +879,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         {config && (
           <InfoBanner kind={config.configured ? "success" : "warning"}>
             {config.configured
-              ? `Live — ${activePanels.length} panel${activePanels.length === 1 ? "" : "s"} connected, users can place orders.`
+              ? `Live — ${activePanels.length} panel${activePanels.length === 1 ? "" : "s"} connected. ` +
+                `Platforms open to users: ${livePlatformNames || "none yet"}.`
               : "Not ready yet. Add a panel, then map at least one Views service."}
           </InfoBanner>
         )}
@@ -996,7 +1049,62 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 <strong>rotate through them run by run</strong> — run 1 uses the first,
                 run 2 the second, and so on. Each slot can point at a different panel.
               </p>
+              <p className="mt-1.5 text-sm text-slate-500">
+                Each platform has <strong>its own service IDs</strong>. Map them
+                separately below — saving one platform never changes the others.
+              </p>
             </div>
+
+            {/* ---- Platform tabs ---- */}
+            <div className="mb-4 flex flex-wrap gap-2">
+              {PLATFORMS.map((pf) => {
+                const live = config?.platformConfigured?.[pf];
+                const mapped = PLATFORM_METRICS[pf].reduce(
+                  (n, m) => n + (slots[pf]?.[m]?.length || 0),
+                  0
+                );
+                const active = platform === pf;
+                return (
+                  <button
+                    key={pf}
+                    type="button"
+                    onClick={() => setPlatform(pf)}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                      active
+                        ? `${PLATFORM_ACCENT[pf]} border-transparent text-white shadow-sm`
+                        : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                    }`}
+                  >
+                    <span>{PLATFORM_LABELS[pf]}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        active
+                          ? "bg-white/25 text-white"
+                          : live
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {/* Non-breaking space: a normal one collapses at these
+                          font settings and rendered as "1DRAFT". */}
+                      {live
+                        ? `LIVE\u00a0·\u00a0${mapped}`
+                        : mapped > 0
+                        ? `${mapped}\u00a0DRAFT`
+                        : "OFF"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {!config?.platformConfigured?.[platform] && (
+              <InfoBanner kind="warning">
+                {PLATFORM_LABELS[platform]} is not live yet. Map at least one{" "}
+                <strong>Views</strong> service below and save, then it appears on the
+                New Order page.
+              </InfoBanner>
+            )}
 
             {activePanels.length === 0 ? (
               <InfoBanner kind="warning">
@@ -1007,11 +1115,11 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 {catalogueError && <InfoBanner kind="danger">{catalogueError}</InfoBanner>}
 
                 <div className="space-y-4">
-                  {SERVICE_LABELS.map((label) => {
+                  {PLATFORM_METRICS[platform].map((label) => {
                     const meta = LABEL_META[label];
-                    const rows = slots[label];
+                    const rows = slots[platform][label] || [];
                     return (
-                      <div key={label} className="rounded-lg border border-slate-200 p-3">
+                      <div key={`${platform}-${label}`} className="rounded-lg border border-slate-200 p-3">
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold text-slate-900">{meta.title}</span>
@@ -1026,7 +1134,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                               </span>
                             )}
                           </div>
-                          <Button variant="ghost" size="sm" onClick={() => addSlot(label)}>
+                          <Button variant="ghost" size="sm" onClick={() => addSlot(platform, label)}>
                             + Add service
                           </Button>
                         </div>
@@ -1044,7 +1152,12 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                             return (
                               <div
                                 key={index}
-                                className="rounded-md bg-slate-50 p-2 sm:flex sm:items-center sm:gap-2"
+                                /* .slot-row (index.css) lays this out as a grid on
+                                   desktop. A flex row could not size the controls:
+                                   the global `input,select{width:100%}` base rule
+                                   wins over w-44/flex-1, so the Service ID box
+                                   collapsed. Below 640px it stays stacked. */
+                                className="slot-row rounded-md bg-slate-50 p-2"
                               >
                                 <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">
                                   {index + 1}
@@ -1053,10 +1166,10 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                                 <select
                                   value={slot.panelId}
                                   onChange={(e) => {
-                                    patchSlot(label, index, { panelId: e.target.value, serviceId: "" });
+                                    patchSlot(platform, label, index, { panelId: e.target.value, serviceId: "" });
                                     loadCatalogue(e.target.value);
                                   }}
-                                  className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm sm:mt-0 sm:w-44"
+                                  className="mt-2 rounded-lg border border-slate-300 px-2 py-1.5 text-sm sm:mt-0"
                                 >
                                   <option value="">Choose panel…</option>
                                   {activePanels.map((p) => (
@@ -1066,9 +1179,9 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
 
                                 <input
                                   value={slot.serviceId}
-                                  onChange={(e) => patchSlot(label, index, { serviceId: e.target.value.trim() })}
+                                  onChange={(e) => patchSlot(platform, label, index, { serviceId: e.target.value.trim() })}
                                   placeholder="Service ID"
-                                  className="mt-2 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-sm sm:mt-0 sm:flex-1"
+                                  className="mt-2 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-sm sm:mt-0"
                                 />
 
                                 <div className="mt-2 flex gap-1 sm:mt-0">
@@ -1080,19 +1193,19 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                                     onClick={async () => {
                                       await loadCatalogue(slot.panelId);
                                       setPickerPanelId(slot.panelId);
-                                      setPicker({ label, index });
+                                      setPicker({ platform, label, index });
                                       setSearch("");
                                     }}
                                   >
                                     Browse
                                   </Button>
-                                  <Button variant="ghost" size="sm" onClick={() => removeSlot(label, index)}>
+                                  <Button variant="ghost" size="sm" onClick={() => removeSlot(platform, label, index)}>
                                     Remove
                                   </Button>
                                 </div>
 
                                 {match && (
-                                  <p className="mt-1 w-full truncate text-[11px] text-emerald-700 sm:mt-0 sm:basis-full">
+                                  <p className="slot-note mt-1 truncate text-[11px] text-emerald-700">
                                     ✓ {match.name} — rate {match.rate}
                                   </p>
                                 )}
@@ -1106,8 +1219,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 </div>
 
                 <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
-                  <Button variant="primary" onClick={handleSaveSlots} loading={saving}>
-                    Save mapping
+                  <Button variant="primary" onClick={() => handleSaveSlots(platform)} loading={saving}>
+                    Save {PLATFORM_LABELS[platform]} mapping
                   </Button>
                   {config?.updatedAt && (
                     <span className="text-xs text-slate-500">
@@ -2441,7 +2554,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
             <div className="border-b border-slate-200 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-slate-900">
-                  {LABEL_META[picker.label].title} — slot {picker.index + 1}
+                  {PLATFORM_LABELS[picker.platform]} · {LABEL_META[picker.label].title} — slot{" "}
+                  {picker.index + 1}
                   <span className="ml-2 text-xs font-normal text-slate-500">
                     {panelNameById.get(pickerPanelId)}
                   </span>
@@ -2466,7 +2580,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     key={s.id}
                     type="button"
                     onClick={() => {
-                      patchSlot(picker.label, picker.index, { serviceId: s.id });
+                      patchSlot(picker.platform, picker.label, picker.index, { serviceId: s.id });
                       setPicker(null);
                     }}
                     className="w-full rounded-lg px-3 py-2.5 text-left hover:bg-indigo-50"
