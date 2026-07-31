@@ -505,11 +505,39 @@ export async function checkProviderOrderStatus(schedulerOrderId: string): Promis
    ============================================================ */
 
 export type ServiceLabel =
-  | "views" | "likes" | "shares" | "saves" | "comments" | "reposts";
+  | "views" | "likes" | "shares" | "saves" | "comments" | "reposts"
+  | "followers" | "subscribers";
 
 export const SERVICE_LABELS: ServiceLabel[] = [
   "views", "likes", "shares", "saves", "comments", "reposts",
+  "followers", "subscribers",
 ];
+
+/* ---- Platforms ----
+   Mirrors PLATFORM_METRICS in the backend. Each platform has its own
+   service ids on the provider side and its own meaningful engagement
+   types (YouTube has no saves, TikTok has followers not reposts). */
+export type Platform = "instagram" | "tiktok" | "youtube";
+
+export const PLATFORMS: Platform[] = ["instagram", "tiktok", "youtube"];
+export const DEFAULT_PLATFORM: Platform = "instagram";
+
+export const PLATFORM_LABELS: Record<Platform, string> = {
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  youtube: "YouTube",
+};
+
+export const PLATFORM_METRICS: Record<Platform, ServiceLabel[]> = {
+  instagram: ["views", "likes", "shares", "saves", "comments", "reposts"],
+  tiktok: ["views", "likes", "shares", "saves", "comments", "followers"],
+  youtube: ["views", "likes", "comments", "subscribers"],
+};
+
+export function normalizePlatform(value: unknown): Platform {
+  const v = String(value ?? "").trim().toLowerCase() as Platform;
+  return PLATFORMS.includes(v) ? v : DEFAULT_PLATFORM;
+}
 
 /* A single rotating slot: one service on one panel. */
 export interface ServiceSlot {
@@ -527,12 +555,24 @@ export interface ServiceAvailability {
   slots: Array<{ serviceId: string; panelId: string; panelName: string }>;
 }
 
+/** Per-platform slice of the public config. */
+export interface PlatformAvailability {
+  key: Platform;
+  label: string;
+  metrics: ServiceLabel[];
+  services: Record<ServiceLabel, ServiceAvailability>;
+  configured: boolean;
+}
+
 export interface PanelConfig {
   /** Empty for normal users; provider names are owner-only. */
   panels: Array<{ id: string; name: string }>;
   /** Always present, so the UI can say "3 providers" without naming them. */
   panelCount: number;
+  /** Legacy flat view = Instagram. Kept so older screens keep working. */
   services: Record<ServiceLabel, ServiceAvailability>;
+  /** Per-platform view. Always has an entry for every platform. */
+  platforms: Record<Platform, PlatformAvailability>;
   configured: boolean;
   updatedAt: string | null;
 }
@@ -549,7 +589,12 @@ export interface AdminPanel {
 
 export interface AdminPanelConfig {
   panels: AdminPanel[];
+  /** Legacy flat map = Instagram. Kept for rollback safety. */
   serviceSlots: Record<ServiceLabel, ServiceSlot[]>;
+  /** The editable per-platform mapping shown on the Services tab. */
+  platformSlots: Record<Platform, Record<ServiceLabel, ServiceSlot[]>>;
+  /** True when that platform has at least one usable Views slot. */
+  platformConfigured: Record<Platform, boolean>;
   configured: boolean;
   updatedAt: string | null;
 }
@@ -567,7 +612,19 @@ export function clearStoredAdminPassword() {
 }
 
 function emptySlots(): Record<ServiceLabel, ServiceSlot[]> {
-  return { views: [], likes: [], shares: [], saves: [], comments: [], reposts: [] };
+  const out = {} as Record<ServiceLabel, ServiceSlot[]>;
+  for (const label of SERVICE_LABELS) out[label] = [];
+  return out;
+}
+
+/** One empty slot map per platform, holding only that platform's metrics. */
+export function emptyPlatformSlots(): Record<Platform, Record<ServiceLabel, ServiceSlot[]>> {
+  const out = {} as Record<Platform, Record<ServiceLabel, ServiceSlot[]>>;
+  for (const p of PLATFORMS) {
+    out[p] = {} as Record<ServiceLabel, ServiceSlot[]>;
+    for (const m of PLATFORM_METRICS[p]) out[p][m] = [];
+  }
+  return out;
 }
 
 function normalizeAvailability(raw: unknown): ServiceAvailability {
@@ -595,6 +652,38 @@ function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
     services[label] = normalizeAvailability(rawServices[label]);
   }
   const panels = Array.isArray(raw.panels) ? raw.panels : [];
+
+  /* Per-platform. An older server sends no `platforms` key, in which case
+     Instagram inherits the flat map and the other two read as unconfigured
+     rather than crashing the page. */
+  const rawPlatforms = (raw.platforms || {}) as Record<string, unknown>;
+  const platforms = {} as Record<Platform, PlatformAvailability>;
+  for (const key of PLATFORMS) {
+    const entry = (rawPlatforms[key] || {}) as Record<string, unknown>;
+    const entryServices = (entry.services || {}) as Record<string, unknown>;
+    const metrics = Array.isArray(entry.metrics)
+      ? (entry.metrics as unknown[]).map((m) => String(m) as ServiceLabel)
+      : PLATFORM_METRICS[key];
+    const perPlatform = {} as Record<ServiceLabel, ServiceAvailability>;
+    for (const label of metrics) {
+      perPlatform[label] = normalizeAvailability(
+        entryServices[label] ?? (key === DEFAULT_PLATFORM ? rawServices[label] : undefined)
+      );
+    }
+    platforms[key] = {
+      key,
+      label: String(entry.label ?? PLATFORM_LABELS[key]),
+      metrics,
+      services: perPlatform,
+      configured:
+        entry.configured !== undefined
+          ? Boolean(entry.configured)
+          : key === DEFAULT_PLATFORM
+          ? Boolean(raw.configured)
+          : false,
+    };
+  }
+
   return {
     panels: panels.map((p) => {
       const row = p as Record<string, unknown>;
@@ -602,25 +691,50 @@ function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
     }),
     panelCount: Number(raw.panelCount) || panels.length,
     services,
+    platforms,
     configured: Boolean(raw.configured),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
   };
+}
+
+function readSlotRows(value: unknown): ServiceSlot[] {
+  const rows = Array.isArray(value) ? (value as unknown[]) : [];
+  return rows.map((r) => {
+    const row = r as Record<string, unknown>;
+    return {
+      panelId: String(row.panelId ?? ""),
+      serviceId: String(row.serviceId ?? ""),
+      panelName: String(row.panelName ?? ""),
+    };
+  });
 }
 
 function normalizeAdminConfig(raw: Record<string, unknown>): AdminPanelConfig {
   const rawSlots = (raw.serviceSlots || {}) as Record<string, unknown>;
   const serviceSlots = emptySlots();
   for (const label of SERVICE_LABELS) {
-    const rows = Array.isArray(rawSlots[label]) ? (rawSlots[label] as unknown[]) : [];
-    serviceSlots[label] = rows.map((r) => {
-      const row = r as Record<string, unknown>;
-      return {
-        panelId: String(row.panelId ?? ""),
-        serviceId: String(row.serviceId ?? ""),
-        panelName: String(row.panelName ?? ""),
-      };
-    });
+    serviceSlots[label] = readSlotRows(rawSlots[label]);
   }
+
+  /* Per-platform. Falls back to the flat map for Instagram so an older
+     server (or a config saved before the migration) still shows its slots. */
+  const rawPlatformSlots = (raw.platformSlots || {}) as Record<string, unknown>;
+  const rawConfigured = (raw.platformConfigured || {}) as Record<string, unknown>;
+  const platformSlots = emptyPlatformSlots();
+  const platformConfigured = {} as Record<Platform, boolean>;
+  for (const key of PLATFORMS) {
+    const entry = (rawPlatformSlots[key] || {}) as Record<string, unknown>;
+    for (const metric of PLATFORM_METRICS[key]) {
+      const source =
+        entry[metric] ?? (key === DEFAULT_PLATFORM ? rawSlots[metric] : undefined);
+      platformSlots[key][metric] = readSlotRows(source);
+    }
+    platformConfigured[key] =
+      rawConfigured[key] !== undefined
+        ? Boolean(rawConfigured[key])
+        : platformSlots[key].views.some((s) => Boolean(s.serviceId));
+  }
+
   const panels = Array.isArray(raw.panels) ? raw.panels : [];
   return {
     panels: panels.map((p) => {
@@ -635,6 +749,8 @@ function normalizeAdminConfig(raw: Record<string, unknown>): AdminPanelConfig {
       };
     }),
     serviceSlots,
+    platformSlots,
+    platformConfigured,
     configured: Boolean(raw.configured),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
   };
@@ -713,15 +829,17 @@ export async function deletePanel(
   return normalizeAdminConfig(await parseOrThrow(response));
 }
 
-/** Replace the rotating slot list for one or more labels. */
+/** Replace the rotating slot list for one or more labels on ONE platform.
+    Metrics belonging to other platforms are left untouched by the server. */
 export async function saveServiceSlots(
   password: string,
-  serviceSlots: Partial<Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>>
+  serviceSlots: Partial<Record<ServiceLabel, Array<{ panelId: string; serviceId: string }>>>,
+  platform: Platform = DEFAULT_PLATFORM
 ): Promise<AdminPanelConfig> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/admin/service-slots`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-password": password },
-    body: JSON.stringify({ serviceSlots }),
+    body: JSON.stringify({ platform, serviceSlots }),
   });
   return normalizeAdminConfig(await parseOrThrow(response));
 }
