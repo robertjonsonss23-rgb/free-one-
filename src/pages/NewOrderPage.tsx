@@ -8,7 +8,7 @@ import type {
   EngagementRatios,
   OrderConfig,
   PatternPlan,
-  QuickPatternPreset,
+  QuickPatternPreset, 
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
 import {
