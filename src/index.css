@@ -1033,4 +1033,39 @@ html.theme-ready body {
 .dark .bg-indigo-600.text-white,
 .dark .bg-rose-600.text-white,
 .dark .bg-emerald-600.text-white,
-.dark .bg-violet-600.text-white { color: #ffffff; }
+.dark .bg-violet-600.text-white,
+.dark .bg-pink-600.text-white,
+.dark .bg-red-600.text-white { color: #ffffff; }
+
+/* ---- Admin platform tabs (Instagram / TikTok / YouTube) ----
+   The selected tab paints a saturated brand colour, and its count badge
+   sits on a translucent white overlay on top of that. Both inherit
+   `text-white`, so in dark mode they picked up the remapped near-black
+   (measured 3.83:1 on the label and 2.52:1 on the badge). The child
+   selector covers the badge, whose colour is inherited rather than set.
+   `bg-slate-900` is also inverted by .dark, so TikTok's tab is repainted
+   to stay dark like its brand. */
+.dark .bg-pink-600.text-white *,
+.dark .bg-red-600.text-white * { color: #ffffff; }
+
+.dark button.bg-slate-900.text-white,
+.dark button.bg-slate-900.text-white * { color: #ffffff; }
+.dark button.bg-slate-900.text-white { background-color: #0b0f17; }
+
+/* ---- Admin → Services: one rotating slot row ----
+   The base form rule above sets `width:100%` on every input/select, and it
+   is defined after the Tailwind utilities, so `sm:w-44` / `sm:flex-1` lose
+   the cascade and both controls stretched to the full row — the Service ID
+   box was squeezed to zero once the "✓ name — rate" line wrapped in beside
+   it. A grid sizes the tracks instead of the elements, so width:100% simply
+   fills the track it was given and no specificity fight is needed. */
+@media (min-width: 640px) {
+  .slot-row {
+    display: grid;
+    grid-template-columns: auto 11rem minmax(9rem, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  /* The confirmation line sits on its own row under the controls. */
+  .slot-row > .slot-note { grid-column: 1 / -1; margin-top: 0; }
+}
