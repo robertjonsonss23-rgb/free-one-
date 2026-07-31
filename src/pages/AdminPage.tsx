@@ -29,6 +29,9 @@ import {
   setUserOwner,
   setUserOrderAccess,
   sendTelegramTest,
+  fetchPanelBalances,
+  runBalanceCheck,
+  type PanelBalance,
   fetchAdminDeposits,
   reviewDeposit,
   adjustUserWallet,
@@ -155,6 +158,22 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* Live provider balances. Loaded when the Panels tab opens; a manual
+     refresh bypasses the server's 5-minute cache. */
+  const [balances, setBalances] = useState<PanelBalance[]>([]);
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const loadBalances = useCallback(async (pw: string, refresh = false) => {
+    setBalancesLoading(true);
+    try {
+      const result = await fetchPanelBalances(pw, refresh);
+      setBalances(result.panels);
+    } catch {
+      setBalances([]);
+    } finally {
+      setBalancesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const saved = getStoredAdminPassword();
     if (!saved) { setBooting(false); return; }
@@ -165,13 +184,14 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         setAuthed(true);
         loadDeposits(saved, "pending", "wallet");
         loadPaymentSettings(saved);
+        loadBalances(saved);
       } catch {
         clearStoredAdminPassword();
       } finally {
         setBooting(false);
       }
     })();
-  }, [loadConfig, loadDeposits, loadPaymentSettings]);
+  }, [loadConfig, loadDeposits, loadPaymentSettings, loadBalances]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,6 +206,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       setAuthed(true);
       loadDeposits(password, "pending", "wallet");
       loadPaymentSettings(password);
+      loadBalances(password);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Login failed.");
     } finally {
@@ -370,6 +391,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         cryptoMethods: payment.cryptoMethods,
         cryptoPacks: payment.cryptoPacks,
         currencies: payment.currencies,
+        lowBalanceThreshold: payment.lowBalanceThreshold,
         hideRunProblems: payment.hideRunProblems,
         pendingGraceMinutes: payment.pendingGraceMinutes,
         referralEnabled: payment.referralEnabled,
@@ -418,6 +440,24 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   };
 
   const [tgTesting, setTgTesting] = useState(false);
+  const [balanceChecking, setBalanceChecking] = useState(false);
+  const handleBalanceCheck = async () => {
+    setBalanceChecking(true);
+    try {
+      const r = await runBalanceCheck(password);
+      await loadBalances(password, true);
+      fireToast(
+        "success",
+        r.alerted > 0
+          ? `Checked ${r.checked} panel(s) — ${r.alerted} alert(s) sent to Telegram.`
+          : `Checked ${r.checked} panel(s). Nothing below the threshold.`
+      );
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Could not check balances.");
+    } finally {
+      setBalanceChecking(false);
+    }
+  };
   const handleTelegramTest = async () => {
     setTgTesting(true);
     try {
@@ -748,6 +788,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
               onClick={() => {
                 setTab(key);
                 if (key === "users" && users.length === 0) loadUsers();
+                if (key === "panels" && balances.length === 0) loadBalances(password);
                 if (key === "payments") {
                   loadDeposits(password, depositFilter, "wallet");
                   if (!payment) loadPaymentSettings(password);
@@ -795,11 +836,21 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         {tab === "panels" && (
           <>
             <Card>
-              <div className="mb-4">
-                <h2 className="text-base font-semibold text-slate-900">Connected panels</h2>
-                <p className="mt-0.5 text-sm text-slate-500">
-                  Add as many SMM providers as you like. Credentials stay on the server.
-                </p>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">Connected panels</h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    Add as many SMM providers as you like. Credentials stay on the server.
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={balancesLoading}
+                  onClick={() => loadBalances(password, true)}
+                >
+                  Refresh balances
+                </Button>
               </div>
 
               {config && config.panels.length === 0 && (
@@ -824,6 +875,60 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                       <p className="mt-0.5 truncate text-[11px] text-slate-500">{panel.apiUrl}</p>
                       <p className="text-[11px] font-mono text-slate-400">{panel.apiKeyMask}</p>
                     </div>
+
+                    {/* Credit left in the provider account. */}
+                    {(() => {
+                      const bal = balances.find((b) => b.id === panel.id);
+                      if (!bal) {
+                        return (
+                          <div className="mt-2 text-right sm:mt-0">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                              Balance
+                            </p>
+                            <p className="text-sm font-semibold text-slate-400">
+                              {balancesLoading ? "checking…" : "—"}
+                            </p>
+                          </div>
+                        );
+                      }
+                      if (!bal.ok) {
+                        return (
+                          <div className="mt-2 text-right sm:mt-0" title={bal.error}>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                              Balance
+                            </p>
+                            <p className="text-sm font-bold text-rose-600">unreadable</p>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="mt-2 text-right sm:mt-0">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                            Balance
+                          </p>
+                          <p
+                            className={`text-sm font-extrabold tabular-nums ${
+                              bal.isLow ? "text-rose-600" : "text-emerald-700"
+                            }`}
+                          >
+                            ₹{(bal.balanceInr ?? 0).toLocaleString("en-IN", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            })}
+                            {bal.isLow && (
+                              <span className="ml-1 rounded bg-rose-100 px-1 py-0.5 text-[9px] uppercase">
+                                low
+                              </span>
+                            )}
+                          </p>
+                          {bal.currency && bal.currency !== "INR" && (
+                            <p className="text-[10px] text-slate-500">
+                              {bal.balance} {bal.currency}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div className="mt-2 flex gap-2 sm:mt-0">
                       <Button
                         variant="ghost"
@@ -1787,6 +1892,47 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                   <Button variant="secondary" size="sm" loading={tgTesting} onClick={handleTelegramTest}>
                     Send test alert
                   </Button>
+
+                  {/* ---- Low panel balance ---- */}
+                  <div className="mt-4 border-t border-slate-200 pt-4">
+                    <h4 className="text-sm font-semibold text-slate-900">
+                      Low panel balance alert
+                    </h4>
+                    <p className="mt-0.5 mb-2 max-w-xl text-sm text-slate-500">
+                      Ping me when any connected SMM panel drops below this, so I can top
+                      it up before orders start failing. Checked hourly. Set 0 to turn off.
+                    </p>
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="w-40">
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Alert below (₹)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={payment.lowBalanceThreshold || ""}
+                          onChange={(e) =>
+                            patchPayment({ lowBalanceThreshold: Number(e.target.value) })
+                          }
+                          placeholder="500"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={balanceChecking}
+                        onClick={handleBalanceCheck}
+                      >
+                        Check balances now
+                      </Button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      {payment.lowBalanceThreshold > 0
+                        ? `You'll be alerted once per panel when it falls below ₹${payment.lowBalanceThreshold}, and again when it recovers.`
+                        : "Alerts are off."}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="mt-5 flex items-center gap-3 border-t border-slate-200 pt-4">
