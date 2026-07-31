@@ -6,9 +6,12 @@ import type { BackendRunInfo } from "../types/order";
 interface CreateOrderPayload {
   name?: string;
   link: string;
+  /** Which platform this order targets. Defaults to Instagram server-side. */
+  platform?: "instagram" | "tiktok" | "youtube";
   services: Partial<
     Record<
-      "views" | "likes" | "shares" | "saves" | "comments" | "reposts",
+      | "views" | "likes" | "shares" | "saves" | "comments" | "reposts"
+      | "followers" | "subscribers",
       {
         runs: Array<{
           time: string;
@@ -537,6 +540,34 @@ export const PLATFORM_METRICS: Record<Platform, ServiceLabel[]> = {
 export function normalizePlatform(value: unknown): Platform {
   const v = String(value ?? "").trim().toLowerCase() as Platform;
   return PLATFORMS.includes(v) ? v : DEFAULT_PLATFORM;
+}
+
+/** Example link shown in the Post URL box, per platform. */
+export const PLATFORM_LINK_HINT: Record<Platform, string> = {
+  instagram: "https://instagram.com/reel/...",
+  tiktok: "https://tiktok.com/@user/video/...",
+  youtube: "https://youtube.com/watch?v=...",
+};
+
+/** Hostnames that clearly belong to a platform, used for a soft warning. */
+export const PLATFORM_HOSTS: Record<Platform, string[]> = {
+  instagram: ["instagram.com", "instagr.am"],
+  tiktok: ["tiktok.com", "vm.tiktok.com", "vt.tiktok.com"],
+  youtube: ["youtube.com", "youtu.be", "m.youtube.com"],
+};
+
+/** Which platform a link looks like, or null when it matches none of them. */
+export function detectPlatformFromLink(link: string): Platform | null {
+  let host = "";
+  try {
+    host = new URL(link.trim()).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+  for (const p of PLATFORMS) {
+    if (PLATFORM_HOSTS[p].some((h) => host === h || host.endsWith(`.${h}`))) return p;
+  }
+  return null;
 }
 
 /* A single rotating slot: one service on one panel. */
@@ -1083,11 +1114,14 @@ export interface QuoteResult {
 export async function fetchQuote(
   /* A number is a total (split evenly across slots — an estimate).
      An array of per-run quantities is priced against the real rotation. */
-  services: Partial<Record<ServiceLabel, number | number[]>>
+  services: Partial<Record<ServiceLabel, number | number[]>>,
+  /* Prices against that platform's own service ids. Metrics the platform
+     does not support are ignored by the server. */
+  platform: Platform = DEFAULT_PLATFORM
 ): Promise<QuoteResult> {
   const response = await authedFetch(`${BACKEND_BASE_URL}/api/quote`, {
     method: "POST",
-    body: JSON.stringify({ services }),
+    body: JSON.stringify({ services, platform }),
   });
   const payload = await parseOrThrow(response);
   return {
