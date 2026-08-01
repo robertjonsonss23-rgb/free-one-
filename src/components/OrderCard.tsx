@@ -13,6 +13,15 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Card, Button, StatusPill } from "./ui";
+import { PLATFORM_LABELS, normalizePlatform } from "../utils/api";
+
+/* Brand tint per platform, matching the Admin tabs and the New Order picker
+   so the same colour means the same thing everywhere. */
+const PLATFORM_BADGE: Record<string, string> = {
+  instagram: "platform-badge-instagram",
+  tiktok: "platform-badge-tiktok",
+  youtube: "platform-badge-youtube",
+};
 
 interface OrderCardProps {
   order: CreatedOrder;
@@ -38,6 +47,13 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
   const safeRunErrors = order?.runErrors || [];
   const finishTime = safeRuns[safeRuns.length - 1]?.at;
   const safeLink = order?.link || "";
+  const orderPlatform = normalizePlatform(order?.platform);
+  /* The engine stores TikTok followers and YouTube subscribers in the
+     `reposts` field, so only the wording changes per platform. */
+  const repostsLabel =
+    orderPlatform === "tiktok" ? "Followers"
+    : orderPlatform === "youtube" ? "Subscribers"
+    : "Reposts";
 
   const { totalRuns, completedRuns, progressPercent } = useMemo(() => {
     const nextTotalRuns = Math.max(1, safeRuns.length);
@@ -150,9 +166,19 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0 flex-1">
           <p className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Mission</p>
-          <h3 className="text-base font-semibold text-slate-900">
-            {order.name || `Mission #${order.id.slice(0, 8)}`}
-          </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-slate-900">
+              {order.name || `Mission #${order.id.slice(0, 8)}`}
+            </h3>
+            {/* Orders placed before the platform feature have no stored
+                value and correctly read as Instagram. */}
+            <span
+              data-platform={orderPlatform}
+              className={`platform-badge ${PLATFORM_BADGE[orderPlatform]}`}
+            >
+              {PLATFORM_LABELS[orderPlatform as keyof typeof PLATFORM_LABELS]}
+            </span>
+          </div>
           <p className="text-xs text-slate-500 truncate max-w-full" title={safeLink || undefined}>
             {shortLink || "No link provided"}
           </p>
@@ -206,8 +232,17 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
         {[
           { label: "Views", value: `${(order.totalViews / 1000).toFixed(0)}k`, color: "text-indigo-600" },
           { label: "Likes", value: order.engagement.likes, color: "text-pink-600" },
-          { label: "Shares", value: order.engagement.shares, color: "text-sky-600" },
-          { label: "Saves", value: order.engagement.saves, color: "text-violet-600" },
+          /* YouTube sells neither shares nor saves, so those tiles would be a
+             permanent 0. Show the platform's own third metric instead. */
+          ...(orderPlatform === "youtube"
+            ? [
+                { label: "Subscribers", value: order.engagement.reposts, color: "text-cyan-600" },
+                { label: "Comments", value: order.engagement.comments, color: "text-amber-600" },
+              ]
+            : [
+                { label: "Shares", value: order.engagement.shares, color: "text-sky-600" },
+                { label: "Saves", value: order.engagement.saves, color: "text-violet-600" },
+              ]),
         ].map((s) => (
           <div key={s.label} className="rounded-md bg-slate-50 px-3 py-2">
             <p className={`text-base font-bold ${s.color} tabular-nums`}>{s.value}</p>
@@ -327,6 +362,7 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
                 runReasons={order.runReasons || []}
                 runActualExecutedTimes={order.runActualExecutedTimes || []}
                 mode="customer"
+                repostsLabel={repostsLabel}
               />
             </div>
           </motion.div>
