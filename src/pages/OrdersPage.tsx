@@ -12,6 +12,12 @@ import {
   SectionHeader,
   InfoBanner,
 } from "../components/ui";
+import {
+  PLATFORMS,
+  PLATFORM_LABELS,
+  normalizePlatform,
+  type Platform,
+} from "../utils/api";
 
 interface OrdersPageProps {
   orders: CreatedOrder[];
@@ -77,13 +83,18 @@ function getRealStatus(order: CreatedOrder): string {
 /* The backend returns one row per (service, time). Users think in terms of
    "at 6pm I get 2000 views and 40 likes", so pivot those rows into a grid:
    one row per scheduled time, one column per service actually ordered. */
+/* Every metric any platform can produce. Columns are filtered down to the
+   ones actually present in an order's runs, so an Instagram order never
+   shows an empty Followers column and vice versa. */
 const SERVICE_COLUMNS = [
-  { key: "VIEWS",    label: "Views" },
-  { key: "LIKES",    label: "Likes" },
-  { key: "SHARES",   label: "Shares" },
-  { key: "SAVES",    label: "Saves" },
-  { key: "REPOSTS",  label: "Reposts" },
-  { key: "COMMENTS", label: "Comments" },
+  { key: "VIEWS",       label: "Views" },
+  { key: "LIKES",       label: "Likes" },
+  { key: "SHARES",      label: "Shares" },
+  { key: "SAVES",       label: "Saves" },
+  { key: "REPOSTS",     label: "Reposts" },
+  { key: "FOLLOWERS",   label: "Followers" },
+  { key: "SUBSCRIBERS", label: "Subscribers" },
+  { key: "COMMENTS",    label: "Comments" },
 ] as const;
 
 /* Runs for different services are scheduled a few seconds apart, so exact
@@ -240,6 +251,7 @@ export function OrdersPage({
   onDismissNotice,
 }: OrdersPageProps) {
   const [query, setQuery] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("rows");
   const [activeTab, setActiveTab] = useState<TabType>("running");
   const [openedGroupId, setOpenedGroupId] = useState<string | null>(null);
@@ -351,8 +363,39 @@ export function OrdersPage({
     return { running, completed, scheduled, cancelled };
   }, [groupedOrders]);
 
+  /* Per-platform counts for the CURRENT tab only. Counting every tab meant
+     an account whose TikTok orders were all cancelled still saw a TikTok
+     chip on the Scheduled tab that filtered to nothing. */
+  const platformCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const group of categorizedGroups[activeTab]) {
+      const p = normalizePlatform(group.orders[0]?.platform);
+      counts[p] = (counts[p] || 0) + 1;
+    }
+    return counts;
+  }, [categorizedGroups, activeTab]);
+
+  /* Only worth offering when the account actually has more than one. */
+  const usedPlatforms = useMemo(
+    () => PLATFORMS.filter((p) => (platformCounts[p] || 0) > 0),
+    [platformCounts]
+  );
+
+  /* Switching tabs can strand the filter on a platform with nothing in it,
+     which would show an empty list with no obvious cause. */
+  useEffect(() => {
+    if (platformFilter !== "all" && !(platformCounts[platformFilter] > 0)) {
+      setPlatformFilter("all");
+    }
+  }, [platformCounts, platformFilter]);
+
   const filteredGroups = useMemo(() => {
-    const groupsForTab = categorizedGroups[activeTab];
+    let groupsForTab = categorizedGroups[activeTab];
+    if (platformFilter !== "all") {
+      groupsForTab = groupsForTab.filter(
+        (group) => normalizePlatform(group.orders[0]?.platform) === platformFilter
+      );
+    }
     const value = query.trim().toLowerCase();
     if (!value) return groupsForTab;
     return groupsForTab.filter(
@@ -364,7 +407,7 @@ export function OrdersPage({
             order.id.toLowerCase().includes(value)
         )
     );
-  }, [categorizedGroups, activeTab, query]);
+  }, [categorizedGroups, activeTab, query, platformFilter]);
 
   const openedGroup = useMemo(
     () => groupedOrders.find((group) => group.id === openedGroupId) ?? null,
@@ -509,6 +552,34 @@ export function OrdersPage({
         </div>
       </Card>
 
+      {/* Platform filter. Hidden for single-platform accounts so nothing
+          changes for anyone still using Instagram only. */}
+      {usedPlatforms.length > 1 && (
+        <div className="platform-filters flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={platformFilter === "all"}
+            onClick={() => setPlatformFilter("all")}
+            className="platform-filter"
+          >
+            All
+            <span className="platform-filter-count">{categorizedGroups[activeTab].length}</span>
+          </button>
+          {usedPlatforms.map((p) => (
+            <button
+              key={p}
+              type="button"
+              aria-pressed={platformFilter === p}
+              onClick={() => setPlatformFilter(p)}
+              className="platform-filter"
+            >
+              {PLATFORM_LABELS[p]}
+              <span className="platform-filter-count">{platformCounts[p]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {query && (
         <p className="text-sm text-slate-600">
           Found <span className="font-semibold text-slate-900">{filteredGroups.length}</span> mission{filteredGroups.length !== 1 ? "s" : ""} matching "<span className="font-medium text-indigo-600">{query}</span>"
@@ -543,6 +614,7 @@ export function OrdersPage({
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-xs">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Mission</th>
+                  <th className="px-4 py-3 font-semibold">Platform</th>
                   <th className="hidden sm:table-cell px-4 py-3 font-semibold">Link</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="hidden md:table-cell px-4 py-3 font-semibold w-48">Progress</th>
@@ -570,6 +642,18 @@ export function OrdersPage({
                             </span>
                           )}
                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          /* Grouped batches are always one platform, so the
+                             first order in the group speaks for all of them. */
+                          const gp = normalizePlatform(group.orders[0]?.platform);
+                          return (
+                            <span data-platform={gp} className={`platform-badge platform-badge-${gp}`}>
+                              {PLATFORM_LABELS[gp]}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="hidden sm:table-cell px-4 py-3 max-w-[200px]">
                         {group.isBatch ? (
