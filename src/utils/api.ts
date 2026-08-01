@@ -54,6 +54,8 @@ interface OrderStatusResult {
   schedulerOrderId: string;
   name: string;
   link: string;
+  /** Absent on pre-upgrade orders, which are all Instagram. */
+  platform?: string;
   status: string;
   totalRuns: number;
   completedRuns: number;
@@ -1221,19 +1223,51 @@ export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
     let cumulative = 0;
     const firstAt = sorted.length ? new Date(sorted[0].time).getTime() : Date.now();
 
+    /* Engagement runs are scheduled alongside their VIEWS run but a few
+       seconds apart, so match them to the nearest timeline slot. Without
+       this every engagement column read 0 and the run table looked empty.
+       FOLLOWERS/SUBSCRIBERS fold into `reposts`, the channel they ride. */
+    const bucketFor = (iso: string) => {
+      const t = new Date(iso).getTime();
+      let best = 0, bestGap = Infinity;
+      sorted.forEach((s, i) => {
+        const gap = Math.abs(new Date(s.time).getTime() - t);
+        if (gap < bestGap) { bestGap = gap; best = i; }
+      });
+      return best;
+    };
+    const perRun = sorted.map(() => ({ likes: 0, shares: 0, saves: 0, comments: 0, reposts: 0 }));
+    for (const r of runs) {
+      const label = String(r.label).toUpperCase();
+      if (label === "VIEWS") continue;
+      const key =
+        label === "LIKES" ? "likes"
+        : label === "SHARES" ? "shares"
+        : label === "SAVES" ? "saves"
+        : label === "COMMENTS" ? "comments"
+        : label === "REPOSTS" || label === "FOLLOWERS" || label === "SUBSCRIBERS" ? "reposts"
+        : null;
+      if (!key || perRun.length === 0) continue;
+      perRun[bucketFor(r.time)][key] += Number(r.quantity) || 0;
+    }
+
+    let cl = 0, cs = 0, csa = 0, cc = 0, cr = 0;
     const runSteps: RunStep[] = sorted.map((r, index) => {
       const views = Number(r.quantity) || 0;
       cumulative += views;
+      const e = perRun[index];
+      cl += e.likes; cs += e.shares; csa += e.saves; cc += e.comments; cr += e.reposts;
       const at = new Date(r.time);
       return {
         run: index + 1,
         at,
         minutesFromStart: Math.max(0, Math.round((at.getTime() - firstAt) / 60000)),
         views,
-        likes: 0, shares: 0, saves: 0, comments: 0, reposts: 0,
+        likes: e.likes, shares: e.shares, saves: e.saves,
+        comments: e.comments, reposts: e.reposts,
         cumulativeViews: cumulative,
-        cumulativeLikes: 0, cumulativeShares: 0, cumulativeSaves: 0,
-        cumulativeComments: 0, cumulativeReposts: 0,
+        cumulativeLikes: cl, cumulativeShares: cs, cumulativeSaves: csa,
+        cumulativeComments: cc, cumulativeReposts: cr,
       };
     });
 
@@ -1243,6 +1277,9 @@ export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
     return {
       id: String(raw.schedulerOrderId || raw._id || ""),
       name: String(raw.name || "Order"),
+      /* Absent on orders placed before the platform feature — those are
+         all Instagram, which is what normalizePlatform falls back to. */
+      platform: normalizePlatform(raw.platform),
       schedulerOrderId: String(raw.schedulerOrderId || ""),
       smmOrderId: String(sorted.find((r) => r.smmOrderId)?.smmOrderId ?? "Scheduled"),
       link: String(raw.link || ""),
@@ -1256,7 +1293,9 @@ export async function fetchOrdersForCurrentUser(): Promise<CreatedOrder[]> {
         shares: sumLabel("SHARES"),
         saves: sumLabel("SAVES"),
         comments: sumLabel("COMMENTS"),
-        reposts: sumLabel("REPOSTS"),
+        /* TikTok followers and YouTube subscribers ride the `reposts`
+           channel, so whichever of the three this order used lands here. */
+        reposts: sumLabel("REPOSTS") + sumLabel("FOLLOWERS") + sumLabel("SUBSCRIBERS"),
       },
       serviceId: "",
       selectedAPI: null,
