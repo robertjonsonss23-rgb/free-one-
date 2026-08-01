@@ -13,6 +13,7 @@ import type {
 import {
   updateOrderControl,
   fetchOrderStatus,
+  normalizePlatform,
   fetchOrdersForCurrentUser,
   fetchOrderAccess,
   logout,
@@ -361,6 +362,10 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
                 runStatuses,
                 runErrors,
                 backendRuns: result.runs,
+                /* The server is authoritative for the platform. This also
+                   back-fills orders placed before the platform feature,
+                   which have nothing stored locally. */
+                platform: normalizePlatform(result.platform),
                 lastUpdatedAt: new Date().toISOString(),
               },
             });
