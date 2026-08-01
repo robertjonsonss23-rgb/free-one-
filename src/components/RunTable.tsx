@@ -13,6 +13,20 @@ type ExtendedRunStatus =
 
 export type EditableField = "views" | "likes" | "shares" | "saves" | "comments" | "reposts";
 
+/* Column order for the editable schedule table.
+   There is deliberately no "followers"/"subscribers" field: the scheduling
+   engine reuses the `reposts` channel for those, so the run objects only
+   ever carry `reposts`. What changes per platform is the HEADING, supplied
+   by `repostsLabel` below — the numbers are the same either way. */
+const SCHEDULE_FIELDS: Array<{ key: EditableField; label: string }> = [
+  { key: "views", label: "Views" },
+  { key: "likes", label: "Likes" },
+  { key: "shares", label: "Shares" },
+  { key: "saves", label: "Saves" },
+  { key: "comments", label: "Comments" },
+  { key: "reposts", label: "Reposts" },
+];
+
 interface RunTableProps {
   runs: RunStep[];
   /** Enables inline editing of per-run quantities (schedule mode only). */
@@ -28,6 +42,9 @@ interface RunTableProps {
   runReasons?: string[];
   runActualExecutedTimes?: (string | null)[];
   mode?: "schedule" | "logs" | "customer";
+  /* What this platform calls the `reposts` channel: "Reposts" on Instagram,
+     "Followers" on TikTok, "Subscribers" on YouTube. */
+  repostsLabel?: string;
 }
 
 const STATUS_KIND: Record<ExtendedRunStatus, any> = {
@@ -122,6 +139,7 @@ export function RunTable({
   runReasons = [],
   runActualExecutedTimes = [],
   mode = "logs",
+  repostsLabel = "Reposts",
   editable = false,
   onEditRun,
   engagementMinimum = 10,
@@ -139,12 +157,12 @@ export function RunTable({
      "Comments" column is noise. In customer mode the provider-side detail
      (when we placed it, retry counts, error text) is dropped entirely. */
   const METRICS = [
-    { key: "views"    as const, label: "Views",   width: "w-20" },
-    { key: "likes"    as const, label: "Likes",   width: "w-14" },
-    { key: "shares"   as const, label: "Shares",  width: "w-16" },
-    { key: "saves"    as const, label: "Saves",   width: "w-14" },
-    { key: "comments" as const, label: "Cmts",    width: "w-14" },
-    { key: "reposts"  as const, label: "Reposts", width: "w-16" },
+    { key: "views"       as const, label: "Views",   width: "w-20" },
+    { key: "likes"       as const, label: "Likes",   width: "w-14" },
+    { key: "shares"      as const, label: "Shares",  width: "w-16" },
+    { key: "saves"       as const, label: "Saves",   width: "w-14" },
+    { key: "comments"    as const, label: "Cmts",    width: "w-14" },
+    { key: "reposts"     as const, label: repostsLabel, width: "w-20" },
   ];
   const showDiagnostics = mode !== "customer";
   const activeMetrics = METRICS.filter((m) =>
@@ -223,6 +241,12 @@ export function RunTable({
 
   // ============ SCHEDULE MODE ============
   if (mode === "schedule") {
+    /* Columns follow the data instead of a fixed list, so a TikTok order
+       shows Followers and a YouTube order shows Subscribers rather than
+       empty Shares/Saves columns that platform cannot deliver. */
+    const scheduleCols = SCHEDULE_FIELDS
+      .filter((f) => f.key === "views" || safeRuns.some((r) => Number((r as unknown as Record<string, number>)[f.key] || 0) > 0))
+      .map((f) => (f.key === "reposts" ? { ...f, label: repostsLabel } : f));
     return (
       <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-left text-xs">
@@ -230,12 +254,9 @@ export function RunTable({
             <tr>
               <th className="px-3 py-2 font-medium">Run</th>
               <th className="px-3 py-2 font-medium">Time</th>
-              <th className="px-3 py-2 font-medium">Views</th>
-              <th className="px-3 py-2 font-medium">Likes</th>
-              <th className="px-3 py-2 font-medium">Shares</th>
-              <th className="px-3 py-2 font-medium">Saves</th>
-              <th className="px-3 py-2 font-medium">Comments</th>
-              <th className="px-3 py-2 font-medium">Reposts</th>
+              {scheduleCols.map((f) => (
+                <th key={f.key} className="px-3 py-2 font-medium">{f.label}</th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -260,12 +281,11 @@ export function RunTable({
                   <td className="px-3 py-2 text-slate-700">
                     {run.at.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </td>
-                  <td className="px-2 py-1.5">{cell("views", "text-slate-900 font-semibold")}</td>
-                  <td className="px-2 py-1.5">{cell("likes", "text-slate-700")}</td>
-                  <td className="px-2 py-1.5">{cell("shares", "text-slate-700")}</td>
-                  <td className="px-2 py-1.5">{cell("saves", "text-slate-700")}</td>
-                  <td className="px-2 py-1.5">{cell("comments", "text-slate-700")}</td>
-                  <td className="px-2 py-1.5">{cell("reposts", "text-slate-700")}</td>
+                  {scheduleCols.map((f) => (
+                    <td key={f.key} className="px-2 py-1.5">
+                      {cell(f.key, f.key === "views" ? "text-slate-900 font-semibold" : "text-slate-700")}
+                    </td>
+                  ))}
                 </tr>
               );
             })}
