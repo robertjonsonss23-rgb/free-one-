@@ -11,7 +11,7 @@ import {
 import type { ApiService } from "../types/order";
 import { ThemeToggle } from "../components/ThemeToggle";
 import type { Theme } from "../utils/theme";
-import { 
+import {
   fetchAdminPanelConfig,
   fetchAdminServices,
   addPanel,
@@ -431,6 +431,14 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       await savePaymentSettings(password, {
         minDeposit: payment.minDeposit,
         markupPercent: payment.markupPercent,
+        /* Only platforms with an explicit override are sent as numbers; the
+           rest go as null, which tells the server to use the global rate. */
+        platformMarkup: Object.fromEntries(
+          PLATFORMS.map((p) => [
+            p,
+            payment.platformMarkupSet?.[p] ? payment.platformMarkup[p] : null,
+          ])
+        ),
         upiEnabled: payment.upiEnabled,
         cryptoEnabled: payment.cryptoEnabled,
         upiMethods: payment.upiMethods,
@@ -1374,7 +1382,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                      Markup %
+                      Default markup %
                     </label>
                     <input
                       type="number"
@@ -1384,6 +1392,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
                       Panel cost ₹100 → user pays ₹{(100 * (1 + (payment.markupPercent || 0) / 100)).toFixed(2)}
+                      {" · "}used by any platform without its own rate
                     </p>
                   </div>
                   <div>
@@ -1396,6 +1405,95 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                       onChange={(e) => patchPayment({ minDeposit: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     />
+                  </div>
+                </div>
+
+                {/* ---- Per-platform commission ----
+                    Each platform can carry its own margin. Left on "Default"
+                    it simply follows the number above, so nothing changes for
+                    anyone who does not want per-platform pricing. */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Commission per platform
+                  </h3>
+                  <p className="mt-0.5 mb-3 text-[12px] text-slate-500">
+                    Charge a different margin on each platform — useful when a
+                    provider's YouTube rates are pricier than its Instagram ones.
+                    Switch a platform off to fall back to the default above.
+                  </p>
+
+                  <div className="space-y-2">
+                    {PLATFORMS.map((pf) => {
+                      const isSet = payment.platformMarkupSet?.[pf] === true;
+                      const value = payment.platformMarkup?.[pf] ?? payment.markupPercent;
+                      const effective = isSet ? value : payment.markupPercent;
+                      return (
+                        <div
+                          key={pf}
+                          data-platform-row={pf}
+                          className="commission-row rounded-lg border border-slate-200 p-2.5"
+                        >
+                          <span className={`platform-badge platform-badge-${pf}`}>
+                            {PLATFORM_LABELS[pf]}
+                          </span>
+
+                          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-slate-600">
+                            <input
+                              type="checkbox"
+                              aria-label={`Custom commission for ${PLATFORM_LABELS[pf]}`}
+                              checked={isSet}
+                              onChange={(e) =>
+                                patchPayment({
+                                  platformMarkupSet: {
+                                    ...payment.platformMarkupSet,
+                                    [pf]: e.target.checked,
+                                  },
+                                  platformMarkup: {
+                                    ...payment.platformMarkup,
+                                    // Seed from the default so enabling it never jumps to 0.
+                                    [pf]: e.target.checked
+                                      ? payment.platformMarkup?.[pf] ?? payment.markupPercent
+                                      : payment.markupPercent,
+                                  },
+                                })
+                              }
+                            />
+                            Custom
+                          </label>
+
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000}
+                            aria-label={`${PLATFORM_LABELS[pf]} commission percent`}
+                            disabled={!isSet}
+                            value={isSet ? value : ""}
+                            placeholder={`${payment.markupPercent}`}
+                            onChange={(e) =>
+                              patchPayment({
+                                platformMarkup: {
+                                  ...payment.platformMarkup,
+                                  [pf]: Number(e.target.value),
+                                },
+                              })
+                            }
+                            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                          <span className="text-[12px] text-slate-500">%</span>
+
+                          <span
+                            data-effective={pf}
+                            className="commission-hint text-[11px] font-medium text-slate-500"
+                          >
+                            {isSet ? "" : "Default · "}
+                            ₹100 cost → user pays{" "}
+                            <strong className="text-slate-700 tabular-nums">
+                              ₹{(100 * (1 + (Number(effective) || 0) / 100)).toFixed(2)}
+                            </strong>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </Card>
