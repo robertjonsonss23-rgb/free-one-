@@ -1535,6 +1535,11 @@ export interface AdminCryptoPack {
 export interface AdminPaymentSettings {
   minDeposit: number;
   markupPercent: number;
+  /** Effective commission per platform, already resolved by the server:
+      a platform with no override reports the global rate. */
+  platformMarkup: Record<Platform, number>;
+  /** True where the admin has typed an explicit override for that platform. */
+  platformMarkupSet: Record<Platform, boolean>;
   upiEnabled: boolean;
   cryptoEnabled: boolean;
   upiMethods: AdminUpiMethod[];
@@ -1644,6 +1649,22 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
   return {
     minDeposit: Number(payload.minDeposit) || 50,
     markupPercent: Number(payload.markupPercent) || 0,
+    platformMarkup: (() => {
+      const raw = (payload.platformMarkup || {}) as Record<string, unknown>;
+      const out = {} as Record<Platform, number>;
+      const fallback = Number(payload.markupPercent) || 0;
+      for (const p of PLATFORMS) {
+        const v = Number(raw[p]);
+        out[p] = Number.isFinite(v) ? v : fallback;
+      }
+      return out;
+    })(),
+    platformMarkupSet: (() => {
+      const raw = (payload.platformMarkupSet || {}) as Record<string, unknown>;
+      const out = {} as Record<Platform, boolean>;
+      for (const p of PLATFORMS) out[p] = raw[p] === true;
+      return out;
+    })(),
     upiEnabled: Boolean(payload.upiEnabled),
     cryptoEnabled: Boolean(payload.cryptoEnabled),
     upiMethods: upi.map((m) => {
@@ -1711,6 +1732,8 @@ export async function savePaymentSettings(
   settings: Partial<{
     minDeposit: number;
     markupPercent: number;
+    /** null clears an override and returns that platform to the global rate. */
+    platformMarkup: Partial<Record<Platform, number | null>>;
     upiEnabled: boolean;
     cryptoEnabled: boolean;
     upiMethods: AdminUpiMethod[];
