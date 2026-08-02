@@ -1122,3 +1122,40 @@ html.theme-ready body {
 }
 .platform-filter[aria-pressed="true"] .platform-filter-count { color: #ffffff; }
 .platform-filter-count { opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+/* ---- Per-platform commission rows (Admin → Payments) ----
+   The base `input, textarea, select { width: 100% }` rule further up is
+   defined after the Tailwind utilities, so w-24 loses the cascade and the
+   percent box stretched across the row, pushing the "%" onto its own line.
+   Sizing a grid track avoids the specificity fight entirely. */
+.commission-row {
+  display: grid;
+  grid-template-columns: auto auto 6rem auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+}
+.commission-row > .commission-hint {
+  justify-self: end;
+  text-align: right;
+}
+
+/* Below 640px the row would be cramped, so let it wrap into two lines. */
+@media (max-width: 639px) {
+  .commission-row {
+    grid-template-columns: auto auto 5rem auto;
+  }
+  .commission-row > .commission-hint {
+    grid-column: 1 / -1;
+    justify-self: start;
+    text-align: left;
+  }
+}
+
+/* The disabled box marks "this platform follows the default". In dark mode
+   Tailwind's slate-100 stays a bright near-white block that shouts louder
+   than the enabled fields, so tone it down to a recessed surface. */
+.dark .commission-row input[type="number"]:disabled {
+  background-color: rgb(255 255 255 / 0.04);
+  color: var(--text-muted, #7b8598);
+  border-color: rgb(255 255 255 / 0.10);
+}
