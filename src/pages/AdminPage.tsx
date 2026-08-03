@@ -42,6 +42,7 @@ import {
   type AdminCryptoMethod,
   type AdminCryptoPack,
   PLATFORMS,
+  FOLLOWER_PLATFORMS,
   PLATFORM_LABELS,
   PLATFORM_METRICS,
   DEFAULT_PLATFORM,
@@ -437,6 +438,12 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
           PLATFORMS.map((p) => [
             p,
             payment.platformMarkupSet?.[p] ? payment.platformMarkup[p] : null,
+          ])
+        ),
+        followerMarkup: Object.fromEntries(
+          FOLLOWER_PLATFORMS.map((p) => [
+            p,
+            payment.followerMarkupSet?.[p] ? payment.followerMarkup[p] : null,
           ])
         ),
         upiEnabled: payment.upiEnabled,
@@ -1486,6 +1493,98 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                             className="commission-hint text-[11px] font-medium text-slate-500"
                           >
                             {isSet ? "" : "Default · "}
+                            ₹100 cost → user pays{" "}
+                            <strong className="text-slate-700 tabular-nums">
+                              ₹{(100 * (1 + (Number(effective) || 0) / 100)).toFixed(2)}
+                            </strong>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* ---- Follower-growth commission ----
+                    Followers cost far more per unit than views, so the margin
+                    that works for post campaigns is usually wrong here. Left
+                    off, followers simply use the platform rate above. */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Commission on follower growth
+                  </h3>
+                  <p className="mt-0.5 mb-3 text-[12px] text-slate-500">
+                    Applies only to orders from the <strong>Grow Followers</strong>{" "}
+                    page. Switch a platform off and followers use its normal
+                    rate above.
+                  </p>
+
+                  <div className="space-y-2">
+                    {FOLLOWER_PLATFORMS.map((pf) => {
+                      const isSet = payment.followerMarkupSet?.[pf] === true;
+                      const inherited =
+                        payment.platformMarkupSet?.[pf]
+                          ? payment.platformMarkup[pf]
+                          : payment.markupPercent;
+                      const value = payment.followerMarkup?.[pf] ?? inherited;
+                      const effective = isSet ? value : inherited;
+                      return (
+                        <div
+                          key={pf}
+                          data-follower-row={pf}
+                          className="commission-row rounded-lg border border-slate-200 p-2.5"
+                        >
+                          <span className={`platform-badge platform-badge-${pf}`}>
+                            {PLATFORM_LABELS[pf]}
+                          </span>
+
+                          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-slate-600">
+                            <input
+                              type="checkbox"
+                              aria-label={`Custom follower commission for ${PLATFORM_LABELS[pf]}`}
+                              checked={isSet}
+                              onChange={(e) =>
+                                patchPayment({
+                                  followerMarkupSet: {
+                                    ...payment.followerMarkupSet,
+                                    [pf]: e.target.checked,
+                                  },
+                                  followerMarkup: {
+                                    ...payment.followerMarkup,
+                                    [pf]: e.target.checked
+                                      ? payment.followerMarkup?.[pf] ?? inherited
+                                      : inherited,
+                                  },
+                                })
+                              }
+                            />
+                            Custom
+                          </label>
+
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000}
+                            aria-label={`${PLATFORM_LABELS[pf]} follower commission percent`}
+                            disabled={!isSet}
+                            value={isSet ? value : ""}
+                            placeholder={`${inherited}`}
+                            onChange={(e) =>
+                              patchPayment({
+                                followerMarkup: {
+                                  ...payment.followerMarkup,
+                                  [pf]: Number(e.target.value),
+                                },
+                              })
+                            }
+                            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                          <span className="text-[12px] text-slate-500">%</span>
+
+                          <span
+                            data-follower-effective={pf}
+                            className="commission-hint text-[11px] font-medium text-slate-500"
+                          >
+                            {isSet ? "" : "Same as above · "}
                             ₹100 cost → user pays{" "}
                             <strong className="text-slate-700 tabular-nums">
                               ₹{(100 * (1 + (Number(effective) || 0) / 100)).toFixed(2)}
