@@ -29,12 +29,24 @@ export interface FollowerBatch {
 
 export interface FollowerPlan {
   batches: FollowerBatch[];
+  /** What will ACTUALLY be delivered and charged. */
   total: number;
   days: number;
   /** Largest single-day amount — the number that looks suspicious if high. */
   peakPerDay: number;
   averagePerDay: number;
   finishAt: Date;
+  /** The provider's per-batch minimum this plan was built against. */
+  minPerBatch: number;
+  /**
+   * True when the requested amount was below the provider minimum and had
+   * to be rounded UP. The caller must surface this: silently charging for
+   * 100 when the user asked for 50 would be taking money they didn't agree
+   * to spend.
+   */
+  roundedUp: boolean;
+  /** The number originally asked for, when it differs from `total`. */
+  requested: number;
 }
 
 export interface FollowerPlanInput {
@@ -48,6 +60,15 @@ export interface FollowerPlanInput {
   seed?: number;
   /** Batches per day. 1 keeps it simple; 2 looks more natural on big orders. */
   perDay?: number;
+  /**
+   * Smallest quantity the provider will accept for ONE batch.
+   *
+   * Every batch is a separate order to the panel, so a follower service with
+   * a minimum of 100 cannot be drip-fed in 20s — the panel rejects them. The
+   * planner therefore makes fewer, larger batches rather than more, smaller
+   * ones, and the page shows the user how many days that really covers.
+   */
+  minPerBatch?: number;
 }
 
 /* Small deterministic RNG (mulberry32). Math.random() would reshuffle the
@@ -89,15 +110,19 @@ export function planFollowerDrip({
   variance = 0.35,
   seed = 7,
   perDay = 1,
+  minPerBatch = 1,
 }: FollowerPlanInput): FollowerPlan {
   const safeTotal = Math.max(0, Math.floor(total || 0));
   const safeDays = Math.max(1, Math.min(FOLLOWER_MAX_DAYS, Math.floor(days || 1)));
   const slotsPerDay = Math.max(1, Math.min(3, Math.floor(perDay || 1)));
+  const floorQty = Math.max(1, Math.floor(minPerBatch || 1));
 
-  /* Never create more batches than there are followers: 20 followers over
-     30 days would otherwise mean batches of 0. */
+  /* How many batches the provider minimum actually allows. 250 followers at
+     a minimum of 100 can only ever be 2 batches, however many days were
+     asked for — a third batch would be 50 and get rejected. */
+  const affordableSlots = Math.max(1, Math.floor(safeTotal / floorQty));
   const wantedSlots = safeDays * slotsPerDay;
-  const slotCount = Math.max(1, Math.min(wantedSlots, safeTotal));
+  const slotCount = Math.max(1, Math.min(wantedSlots, affordableSlots));
 
   const rand = rng(seed || 1);
 
@@ -113,9 +138,9 @@ export function planFollowerDrip({
   const sumWeights = weights.reduce((a, b) => a + b, 0) || 1;
   const quantities = weights.map(w => Math.floor((w / sumWeights) * safeTotal));
 
-  // 3. Guarantee at least 1 per batch (we already capped slotCount ≤ total).
+  // 3. No batch below the provider minimum, or the panel rejects it.
   for (let i = 0; i < quantities.length; i++) {
-    if (quantities[i] < 1) quantities[i] = 1;
+    if (quantities[i] < floorQty) quantities[i] = floorQty;
   }
 
   /* 4. Reconcile to EXACTLY the paid-for total. Flooring leaves a shortfall;
@@ -132,17 +157,33 @@ export function planFollowerDrip({
     for (const i of order) {
       if (diff === 0) break;
       if (diff > 0) { quantities[i] += 1; diff -= 1; }
-      else if (quantities[i] > 1) { quantities[i] -= 1; diff += 1; }
+      else if (quantities[i] > floorQty) { quantities[i] -= 1; diff += 1; }
     }
     guard += 1;
-    // Everything is already at the floor of 1 and we still owe a reduction.
-    if (diff < 0 && quantities.every(q => q <= 1)) break;
+    /* Every batch is already at the provider floor and we still owe a
+       reduction — drop whole batches instead of going under the minimum,
+       because an under-minimum batch would simply fail at the panel. */
+    if (diff < 0 && quantities.every(q => q <= floorQty)) {
+      while (diff < 0 && quantities.length > 1) {
+        const removed = quantities.pop() as number;
+        diff += removed;
+      }
+      // Any small remainder rides along on the first batch.
+      if (diff !== 0 && quantities.length) {
+        quantities[0] = Math.max(floorQty, quantities[0] + diff);
+        diff = 0;
+      }
+      break;
+    }
   }
 
   // 5. Dates. Batches land between 09:00 and 21:00 local, never overnight.
   const start = new Date(Date.now() + Math.max(0, startDelayHours) * 3600_000);
+  /* Spread over the FINAL batch count: step 4 can drop batches, and using
+     the original slot count would bunch everything into the first days. */
+  const finalCount = Math.max(1, quantities.length);
   const batches: FollowerBatch[] = quantities.map((quantity, i) => {
-    const dayIndex = Math.floor((i / slotCount) * safeDays);
+    const dayIndex = Math.floor((i / finalCount) * safeDays);
     const at = new Date(start.getTime() + dayIndex * 86400_000);
     if (i > 0) {
       const slotInDay = i % slotsPerDay;
@@ -168,6 +209,9 @@ export function planFollowerDrip({
     peakPerDay: Math.max(0, ...perDayTotals.values()),
     averagePerDay: safeDays > 0 ? realTotal / safeDays : realTotal,
     finishAt: batches.length ? batches[batches.length - 1].at : start,
+    minPerBatch: floorQty,
+    roundedUp: realTotal > safeTotal,
+    requested: safeTotal,
   };
 }
 
