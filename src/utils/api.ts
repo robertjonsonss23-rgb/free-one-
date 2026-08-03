@@ -534,7 +534,7 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
 };
 
 export const PLATFORM_METRICS: Record<Platform, ServiceLabel[]> = {
-  instagram: ["views", "likes", "shares", "saves", "comments", "reposts"],
+  instagram: ["views", "likes", "shares", "saves", "comments", "reposts", "followers"],
   tiktok: ["views", "likes", "shares", "saves", "comments", "followers"],
   youtube: ["views", "likes", "comments", "subscribers"],
 };
