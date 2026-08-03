@@ -595,6 +595,33 @@ export interface PlatformAvailability {
   metrics: ServiceLabel[];
   services: Record<ServiceLabel, ServiceAvailability>;
   configured: boolean;
+  /** Whether a followers service is mapped — gates the Grow Followers page.
+      Independent of `configured`, which is about the views mapping. */
+  followersConfigured: boolean;
+}
+
+/** Platforms that can sell profile followers. YouTube sells subs, not these. */
+export const FOLLOWER_PLATFORMS: Platform[] = ["instagram", "tiktok"];
+
+/** Example PROFILE link per platform (not a post link). */
+export const PLATFORM_PROFILE_HINT: Record<Platform, string> = {
+  instagram: "https://instagram.com/yourusername",
+  tiktok: "https://tiktok.com/@yourusername",
+  youtube: "https://youtube.com/@yourchannel",
+};
+
+/* Mirrors the server guard: a followers order must target a profile, so a
+   post/reel/video URL is rejected. Checked here too, purely so the user
+   gets told before they click Start rather than after. */
+const POST_URL_PATTERNS = [
+  /\/(p|reel|reels|tv|stories)\//i,
+  /\/video\//i,
+  /\/(watch|shorts)\b/i,
+  /[?&]v=/i,
+];
+
+export function looksLikePostUrl(link: string): boolean {
+  return POST_URL_PATTERNS.some((re) => re.test(String(link || "")));
 }
 
 export interface PanelConfig {
@@ -708,6 +735,10 @@ function normalizeConfig(raw: Record<string, unknown>): PanelConfig {
       label: String(entry.label ?? PLATFORM_LABELS[key]),
       metrics,
       services: perPlatform,
+      followersConfigured:
+        entry.followersConfigured !== undefined
+          ? Boolean(entry.followersConfigured)
+          : Boolean(perPlatform.followers?.enabled),
       configured:
         entry.configured !== undefined
           ? Boolean(entry.configured)
