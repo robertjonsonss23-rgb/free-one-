@@ -603,6 +603,35 @@ export interface PlatformAvailability {
 /** Platforms that can sell profile followers. YouTube sells subs, not these. */
 export const FOLLOWER_PLATFORMS: Platform[] = ["instagram", "tiktok"];
 
+/** Per-platform follower limits, read from the provider's own catalogue. */
+export interface FollowerLimits {
+  configured: boolean;
+  /** Smallest quantity the panel accepts for a single batch. */
+  minPerBatch: number;
+}
+
+export async function fetchFollowerLimits(): Promise<Record<Platform, FollowerLimits>> {
+  const out = {} as Record<Platform, FollowerLimits>;
+  for (const p of PLATFORMS) out[p] = { configured: false, minPerBatch: 1 };
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/api/followers/limits`);
+    const payload = await parseOrThrow(response);
+    const rows = (payload.platforms || {}) as Record<string, unknown>;
+    for (const p of PLATFORMS) {
+      const row = (rows[p] || {}) as Record<string, unknown>;
+      const min = Number(row.minPerBatch);
+      out[p] = {
+        configured: Boolean(row.configured),
+        minPerBatch: Number.isFinite(min) && min > 0 ? Math.ceil(min) : 1,
+      };
+    }
+  } catch {
+    /* A failed limits call must not block the page: fall back to a
+       minimum of 1 and let the server reject anything genuinely too small. */
+  }
+  return out;
+}
+
 /** Example PROFILE link per platform (not a post link). */
 export const PLATFORM_PROFILE_HINT: Record<Platform, string> = {
   instagram: "https://instagram.com/yourusername",
@@ -1571,6 +1600,9 @@ export interface AdminPaymentSettings {
   platformMarkup: Record<Platform, number>;
   /** True where the admin has typed an explicit override for that platform. */
   platformMarkupSet: Record<Platform, boolean>;
+  /** Commission applied to follower growth, resolved the same way. */
+  followerMarkup: Record<Platform, number>;
+  followerMarkupSet: Record<Platform, boolean>;
   upiEnabled: boolean;
   cryptoEnabled: boolean;
   upiMethods: AdminUpiMethod[];
@@ -1696,6 +1728,24 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
       for (const p of PLATFORMS) out[p] = raw[p] === true;
       return out;
     })(),
+    followerMarkup: (() => {
+      const raw = (payload.followerMarkup || {}) as Record<string, unknown>;
+      const platform = (payload.platformMarkup || {}) as Record<string, unknown>;
+      const out = {} as Record<Platform, number>;
+      const fallback = Number(payload.markupPercent) || 0;
+      for (const p of PLATFORMS) {
+        const v = Number(raw[p]);
+        const pv = Number(platform[p]);
+        out[p] = Number.isFinite(v) ? v : Number.isFinite(pv) ? pv : fallback;
+      }
+      return out;
+    })(),
+    followerMarkupSet: (() => {
+      const raw = (payload.followerMarkupSet || {}) as Record<string, unknown>;
+      const out = {} as Record<Platform, boolean>;
+      for (const p of PLATFORMS) out[p] = raw[p] === true;
+      return out;
+    })(),
     upiEnabled: Boolean(payload.upiEnabled),
     cryptoEnabled: Boolean(payload.cryptoEnabled),
     upiMethods: upi.map((m) => {
@@ -1765,6 +1815,8 @@ export async function savePaymentSettings(
     markupPercent: number;
     /** null clears an override and returns that platform to the global rate. */
     platformMarkup: Partial<Record<Platform, number | null>>;
+    /** null clears the follower override, falling back to the platform rate. */
+    followerMarkup: Partial<Record<Platform, number | null>>;
     upiEnabled: boolean;
     cryptoEnabled: boolean;
     upiMethods: AdminUpiMethod[];
