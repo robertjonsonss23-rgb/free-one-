@@ -50,8 +50,14 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
   const orderPlatform = normalizePlatform(order?.platform);
   /* The engine stores TikTok followers and YouTube subscribers in the
      `reposts` field, so only the wording changes per platform. */
+  /* A followers order carries no views, which is how a profile-growth order
+     is told apart from a post campaign. Its `reposts` channel is followers
+     on both platforms that sell them. */
+  const isFollowerOrder = (order.totalViews || 0) === 0
+    && (order.engagement?.reposts || 0) > 0;
   const repostsLabel =
-    orderPlatform === "tiktok" ? "Followers"
+    isFollowerOrder ? "Followers"
+    : orderPlatform === "tiktok" ? "Followers"
     : orderPlatform === "youtube" ? "Subscribers"
     : "Reposts";
 
@@ -229,7 +235,14 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[
+        {(isFollowerOrder
+          ? [
+              { label: "Followers", value: order.engagement.reposts, color: "text-cyan-600" },
+              { label: "Batches", value: totalRuns, color: "text-indigo-600" },
+              { label: "Delivered", value: completedRuns, color: "text-emerald-600" },
+              { label: "Type", value: "Organic", color: "text-violet-600" },
+            ]
+          : [
           { label: "Views", value: `${(order.totalViews / 1000).toFixed(0)}k`, color: "text-indigo-600" },
           { label: "Likes", value: order.engagement.likes, color: "text-pink-600" },
           /* YouTube sells neither shares nor saves, so those tiles would be a
@@ -243,7 +256,7 @@ export function OrderCard({ order, onControl, onClone, controlBusy }: OrderCardP
                 { label: "Shares", value: order.engagement.shares, color: "text-sky-600" },
                 { label: "Saves", value: order.engagement.saves, color: "text-violet-600" },
               ]),
-        ].map((s) => (
+        ]).map((s) => (
           <div key={s.label} className="rounded-md bg-slate-50 px-3 py-2">
             <p className={`text-base font-bold ${s.color} tabular-nums`}>{s.value}</p>
             <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">{s.label}</p>
