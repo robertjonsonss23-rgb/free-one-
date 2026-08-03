@@ -8,7 +8,7 @@ import type {
   EngagementRatios,
   OrderConfig,
   PatternPlan,
-  QuickPatternPreset, 
+  QuickPatternPreset,
 } from "../types/order";
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
 import {
@@ -73,10 +73,12 @@ const PLATFORM_CHANNELS: Record<Platform, ChannelDef[]> = {
     { planKey: "reposts", apiLabel: "reposts", label: "Reposts", description: "Share to feed", emoji: "📢", color: "cyan", accent: "accent-cyan-600", max: 10, min: 10 },
     CH.comments,
   ],
+  /* No Followers here on purpose. Follower services are delivered to a
+     PROFILE, but this page always sends a post/reel/video link — the panel
+     would take the money and do nothing. Followers are sold on the dedicated
+     Grow Followers page, which collects a profile URL instead. */
   tiktok: [
-    CH.likes, CH.shares, CH.saves,
-    { planKey: "reposts", apiLabel: "followers", label: "Followers", description: "New profile follows", emoji: "👤", color: "cyan", accent: "accent-cyan-600", max: 10, min: 10 },
-    CH.comments,
+    CH.likes, CH.shares, CH.saves, CH.comments,
   ],
   youtube: [
     CH.likes,
@@ -1159,6 +1161,7 @@ export function NewOrderPage({
           editable
           engagementMinimum={10}
           onEditRun={handleEditRun}
+          repostsLabel={channels.find((c) => c.planKey === "reposts")?.label ?? "Reposts"}
         />
       </Card>
 
