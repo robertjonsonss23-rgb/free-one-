@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewOrderPage } from "./pages/NewOrderPage";
+import { GrowFollowersPage } from "./pages/GrowFollowersPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { WalletPage } from "./pages/WalletPage";
 import { PaywallPage } from "./pages/PaywallPage";
@@ -30,6 +31,7 @@ import { formatMoney, useCurrency } from "./utils/currency";
 type NavKey =
   | "dashboard"
   | "new-order"
+  | "grow-followers"
   | "orders"
   | "wallet"
   | "referrals";
@@ -37,6 +39,7 @@ type NavKey =
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
   { key: "new-order", label: "New Order", description: "Create a campaign" },
+  { key: "grow-followers", label: "Grow Followers", description: "Organic profile growth" },
   { key: "orders", label: "Orders", description: "Manage active orders" },
   { key: "wallet", label: "Wallet", description: "Balance & top-ups" },
   { key: "referrals", label: "Refer & Earn", description: "Invite friends, earn credit" },
@@ -159,6 +162,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     if (
       saved === "dashboard" ||
       saved === "new-order" ||
+      saved === "grow-followers" ||
       saved === "orders" ||
       saved === "wallet" ||
       saved === "referrals"
@@ -439,6 +443,31 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       );
     }
 
+    if (activePage === "grow-followers") {
+      /* Same paywall as New Order: both spend money, so unlocking one
+         without the other would be a way around the gate. */
+      if (orderPageLocked) {
+        return (
+          <PaywallPage
+            onUnlocked={() => { refreshOrderAccess(); }}
+            onBalanceChange={setBalance}
+            onGoToWallet={() => navigateToPage("wallet")}
+          />
+        );
+      }
+      return (
+        <GrowFollowersPage
+          onCreateOrder={(order) => persistOrders((prev) => [order, ...prev])}
+          onNavigateToWallet={() => navigateToPage("wallet")}
+          onBalanceChange={setBalance}
+          onNavigateToOrders={(notice) => {
+            if (notice) setOrdersNotice(notice);
+            navigateToPage("orders");
+          }}
+        />
+      );
+    }
+
     if (activePage === "wallet") {
       return <WalletPage onBalanceChange={setBalance} isOwner={user.isOwner} />;
     }
@@ -622,7 +651,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
                   )}
                   <span className="relative">{item.label}</span>
                   {/* Padlock hints that this page needs a one-time unlock. */}
-                  {item.key === "new-order" && orderPageLocked && (
+                  {(item.key === "new-order" || item.key === "grow-followers") && orderPageLocked && (
                     <span
                       title="Locked — one-time unlock required"
                       className="relative ml-auto rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
