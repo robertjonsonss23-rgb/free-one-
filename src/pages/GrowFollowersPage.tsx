@@ -6,6 +6,8 @@ import {
   createSmmOrder,
   fetchPanelConfig,
   fetchQuote,
+  fetchFollowerLimits,
+  type FollowerLimits,
   looksLikePostUrl,
   normalizePlatform,
   FOLLOWER_PLATFORMS,
@@ -64,7 +66,7 @@ export function GrowFollowersPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [showAllBatches, setShowAllBatches] = useState(false);
+  const [limits, setLimits] = useState<Record<Platform, FollowerLimits> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +75,16 @@ export function GrowFollowersPage({
       .catch((e) => {
         if (!cancelled) setConfigError(e instanceof Error ? e.message : "Could not load configuration");
       });
+    return () => { cancelled = true; };
+  }, []);
+
+  /* The provider's own per-batch minimum. Read from the panel rather than
+     hardcoded, so changing service ID does not silently break the drip. */
+  useEffect(() => {
+    let cancelled = false;
+    fetchFollowerLimits()
+      .then((l) => { if (!cancelled) setLimits(l); })
+      .catch(() => { /* falls back to a minimum of 1 */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -88,11 +100,28 @@ export function GrowFollowersPage({
     if (!livePlatforms.includes(platform)) setPlatform(livePlatforms[0]);
   }, [config, livePlatforms, platform]);
 
+
   /* The seed is derived from the inputs, so the preview is stable while you
      read it but genuinely re-rolls when you change the order. */
+  const minPerBatch = limits?.[platform]?.minPerBatch ?? 1;
+  /* The smallest order that is possible at all: one batch at the minimum. */
+  const minOrder = Math.max(FOLLOWER_MIN_TOTAL, minPerBatch);
+
+  /* Lift the amount to the provider minimum once limits arrive, so the page
+     never opens showing a number that cannot be ordered. */
+  useEffect(() => {
+    if (!limits) return;
+    setTotal((t) => (t < minOrder ? minOrder : t));
+  }, [limits, minOrder]);
+
   const plan: FollowerPlan = useMemo(
-    () => planFollowerDrip({ total, days, seed: total * 31 + days * 7 }),
-    [total, days]
+    () => planFollowerDrip({
+      total,
+      days,
+      minPerBatch,
+      seed: total * 31 + days * 7,
+    }),
+    [total, days, minPerBatch]
   );
 
   const verdict = paceVerdict(plan.peakPerDay);
@@ -106,7 +135,7 @@ export function GrowFollowersPage({
   );
 
   useEffect(() => {
-    if (!config?.platforms?.[platform]?.followersConfigured || total < FOLLOWER_MIN_TOTAL) {
+    if (!config?.platforms?.[platform]?.followersConfigured || total < minOrder) {
       setQuote(null);
       return;
     }
@@ -119,7 +148,7 @@ export function GrowFollowersPage({
         .finally(() => { if (!cancelled) setQuoteLoading(false); });
     }, 600);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [quotePayload, platform, config, total]);
+  }, [quotePayload, platform, config, total, minOrder]);
 
   const handleStart = useCallback(async () => {
     setError("");
@@ -131,7 +160,10 @@ export function GrowFollowersPage({
       setError("That's a link to a post. Followers go to your profile — use your profile link instead.");
       return;
     }
-    if (total < FOLLOWER_MIN_TOTAL) { setError(`Order at least ${FOLLOWER_MIN_TOTAL} followers.`); return; }
+    if (total < minOrder) {
+      setError(`This service has a minimum of ${minOrder.toLocaleString()} followers per order.`);
+      return;
+    }
     if (quote?.available && !quote.sufficient) {
       setError(`Not enough balance. This costs ${formatMoney(quote.total)} and you have ${formatMoney(quote.balance)}.`);
       return;
@@ -228,9 +260,6 @@ export function GrowFollowersPage({
     );
   }
 
-  const visibleBatches = showAllBatches ? plan.batches : plan.batches.slice(0, 8);
-  const maxQty = Math.max(...plan.batches.map((b) => b.quantity), 1);
-
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-3 py-4 sm:px-5 sm:py-6">
       {/* ---- Header ---- */}
@@ -305,7 +334,8 @@ export function GrowFollowersPage({
               How many followers
             </label>
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {AMOUNT_PRESETS.map((n) => (
+              {/* Hide presets the provider would reject anyway. */}
+              {AMOUNT_PRESETS.filter((n) => n >= minOrder).map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -328,11 +358,16 @@ export function GrowFollowersPage({
               onChange={(e) => setTotal(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
               className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900"
             />
-            {total > 0 && total < FOLLOWER_MIN_TOTAL && (
+            {total > 0 && total < minOrder ? (
               <p className="mt-1 text-[11px] font-bold text-rose-600">
-                Minimum {FOLLOWER_MIN_TOTAL} followers.
+                This service has a minimum of {minOrder.toLocaleString()} followers.
               </p>
-            )}
+            ) : minPerBatch > 1 ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Minimum {minOrder.toLocaleString()} — your provider sends
+                followers in batches of at least {minPerBatch.toLocaleString()}.
+              </p>
+            ) : null}
           </div>
 
           {/* How fast */}
@@ -424,47 +459,27 @@ export function GrowFollowersPage({
             </InfoBanner>
           </div>
 
-          {/* Batch preview */}
-          <div>
-            <p className="mb-1.5 text-[11px] font-bold text-slate-700">
-              Delivery schedule
-            </p>
-            <div className="grow-schedule space-y-1">
-              {visibleBatches.map((b, i) => (
-                <div key={i} className="flex items-center gap-2" data-batch={i}>
-                  <span className="w-24 shrink-0 text-[10px] font-medium text-slate-500">
-                    {b.at.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                    {" · "}
-                    {b.at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                  <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-indigo-500"
-                      style={{ width: `${Math.max(6, (b.quantity / maxQty) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="w-12 shrink-0 text-right text-[11px] font-bold tabular-nums text-slate-700">
-                    +{b.quantity}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {plan.batches.length > 8 && (
-              <button
-                type="button"
-                onClick={() => setShowAllBatches((v) => !v)}
-                className="mt-1.5 text-[11px] font-bold text-indigo-600 hover:underline"
-              >
-                {showAllBatches
-                  ? "Show less"
-                  : `Show all ${plan.batches.length} batches`}
-              </button>
-            )}
-            <p className="mt-1.5 text-[10px] text-slate-500">
-              Finishes about{" "}
-              {plan.finishAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}.
+          {/* Deliberately no day-by-day breakdown. Customers were reading
+              it as a promise and asking why day 4 landed at a different
+              hour; the exact split is also a provider detail that can shift
+              on retry. Only the shape of the delivery is shown. */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-[11px] font-bold text-slate-700">How it arrives</p>
+            <ul className="mt-1.5 space-y-1 text-[11px] text-slate-600">
+              <li>• Split into small batches through the day, never all at once.</li>
+              <li>• Starts slow, builds up, then eases off — like real growth.</li>
+              <li>• Spread across roughly {plan.days} day{plan.days === 1 ? "" : "s"}.</li>
+              <li>• Nothing is delivered overnight.</li>
+            </ul>
+            <p className="mt-2 text-[10px] text-slate-500" data-finish>
+              Expected to finish around{" "}
+              <strong className="text-slate-700">
+                {plan.finishAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </strong>
+              .
             </p>
           </div>
+
         </Card>
       </div>
 
@@ -500,8 +515,8 @@ export function GrowFollowersPage({
               </div>
             ) : (
               <p className="text-xs font-bold text-slate-500">
-                {total < FOLLOWER_MIN_TOTAL
-                  ? `Choose at least ${FOLLOWER_MIN_TOTAL} followers.`
+                {total < minOrder
+                  ? `Choose at least ${minOrder.toLocaleString()} followers.`
                   : "Cost appears once your plan is ready."}
               </p>
             )}
@@ -511,7 +526,7 @@ export function GrowFollowersPage({
             variant="primary"
             size="lg"
             loading={busy}
-            disabled={busy || linkIsPost || total < FOLLOWER_MIN_TOTAL}
+            disabled={busy || linkIsPost || total < minOrder}
             onClick={handleStart}
             className="font-extrabold"
           >
