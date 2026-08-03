@@ -13,7 +13,7 @@ import {
   FOLLOWER_PLATFORMS,
   PLATFORM_LABELS,
   PLATFORM_PROFILE_HINT,
-  type PanelConfig,
+  type PanelConfig, 
   type Platform,
   type QuoteResult,
 } from "../utils/api";
