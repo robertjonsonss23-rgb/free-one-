@@ -87,6 +87,7 @@ const PLATFORM_CHANNELS: Record<Platform, ChannelDef[]> = {
   ],
 };
 import { createPatternPlan } from "../utils/patterns";
+import { computeBotScore } from "../utils/botScore";
 import {
   Button,
   Card,
@@ -97,6 +98,8 @@ import {
 
 interface NewOrderPageProps {
   orders: CreatedOrder[];
+  /** Bot score is owner-only — customers never see it. */
+  isOwner?: boolean;
   prefillOrder?: CreatedOrder | null;
   activeRatios?: EngagementRatios;
   onCreateOrder: (order: CreatedOrder) => void;
@@ -151,6 +154,7 @@ function SectionTitle({
 
 export function NewOrderPage({
   orders,
+  isOwner = false,
   prefillOrder,
   activeRatios,
   onCreateOrder,
@@ -572,6 +576,22 @@ export function NewOrderPage({
 
   const estimatedRunCount = safePlan.runs.length;
   const averageViewsPerRun = estimatedRunCount > 0 ? Math.round(totalViews / estimatedRunCount) : 0;
+
+  /* Bot score. Owner-only, so it is not even computed for customers —
+     no chance of it leaking into the DOM for someone to read. */
+  const botScore = useMemo(() => {
+    if (!isOwner || safePlan.runs.length === 0) return null;
+    return computeBotScore({
+      plan: safePlan,
+      totalViews,
+      active: {
+        likes: includeLikes, shares: includeShares, saves: includeSaves,
+        comments: includeComments, reposts: includeReposts,
+      },
+      repostsLabel: channels.find((c) => c.planKey === "reposts")?.label ?? "Reposts",
+    });
+  }, [isOwner, safePlan, totalViews, channels,
+      includeLikes, includeShares, includeSaves, includeComments, includeReposts]);
 
   /* Ask the server to price this plan. Rates live behind the admin API key,
      so the maths happens server-side and only totals come back.
@@ -1164,6 +1184,77 @@ export function NewOrderPage({
           repostsLabel={channels.find((c) => c.planKey === "reposts")?.label ?? "Reposts"}
         />
       </Card>
+
+      {/* ============ BOT SCORE (owner only) ============
+          Deliberately not shown to customers: it would either scare them off
+          a fine order or read as a promise we cannot make. This is a tool
+          for the operator to sanity-check a campaign before it runs. */}
+      {botScore && (
+        <div data-bot-score={botScore.score} data-bot-band={botScore.band}>
+          <Card padding="md" className="botscore-card">
+            <div className="flex flex-wrap items-start gap-4">
+              {/* Dial */}
+              <div className={`botscore-dial botscore-${botScore.band}`}>
+                <span className="botscore-value">{botScore.score}</span>
+                <span className="botscore-max">/100</span>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="botscore-badge">Owner only</span>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Bot score — {botScore.label}
+                  </h3>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  {botScore.summary}{" "}
+                  <span className="text-slate-500">Higher means more bot-like.</span>
+                </p>
+
+                {/* Factor bars */}
+                <div className="botscore-factors mt-2.5 grid gap-1.5 sm:grid-cols-2">
+                  {botScore.factors.map((f) => (
+                    <div key={f.key} data-factor={f.key} className="flex items-center gap-2">
+                      <span className="w-32 shrink-0 truncate text-[10px] font-semibold text-slate-600">
+                        {f.label}
+                      </span>
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className={`h-full rounded-full botscore-bar-${
+                            f.score < 30 ? "ok" : f.score < 60 ? "warn" : "bad"
+                          }`}
+                          style={{ width: `${Math.max(3, f.score)}%` }}
+                        />
+                      </div>
+                      <span className="w-7 shrink-0 text-right text-[10px] font-bold tabular-nums text-slate-500">
+                        {f.score}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {botScore.advice.length > 0 && (
+                  <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                      To look more organic
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                      {botScore.advice.map((a, i) => (
+                        <li key={i} className="text-[11px] text-amber-900">• {a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <p className="mt-2 text-[10px] text-slate-400">
+                  An estimate from the order settings, not a guarantee — the
+                  platforms don't publish how they detect this.
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* ============ STICKY FOOTER: COST + DEPLOY ============ */}
       <div className="sticky bottom-3 z-10">
