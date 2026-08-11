@@ -12,7 +12,7 @@ import type {
   RunStatus,
 } from "./types/order";
 import {
-  updateOrderControl, 
+  updateOrderControl,
   fetchOrderStatus,
   normalizePlatform,
   fetchOrdersForCurrentUser,
@@ -429,6 +429,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       return (
         <NewOrderPage
           orders={orders}
+          isOwner={user.isOwner}
           prefillOrder={cloneSourceOrder}
           onCreateOrder={(order) =>
             persistOrders((prev) => [order, ...prev])
