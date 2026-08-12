@@ -13,7 +13,7 @@ import {
   FOLLOWER_PLATFORMS,
   PLATFORM_LABELS,
   PLATFORM_PROFILE_HINT,
-  type PanelConfig, 
+  type PanelConfig,
   type Platform,
   type QuoteResult,
 } from "../utils/api";
@@ -26,6 +26,10 @@ import {
 import type { CreatedOrder } from "../types/order";
 
 interface GrowFollowersPageProps {
+  /** Account hasn't unlocked ordering: browsable, but not orderable. */
+  locked?: boolean;
+  /** Sends the user to the unlock/checkout step. */
+  onUnlock?: () => void;
   onCreateOrder: (order: CreatedOrder) => void;
   onNavigateToOrders: (notice?: string) => void;
   onNavigateToWallet?: () => void;
@@ -50,6 +54,8 @@ const PLATFORM_TONE: Record<Platform, string> = {
 };
 
 export function GrowFollowersPage({
+  locked = false,
+  onUnlock,
   onCreateOrder,
   onNavigateToOrders,
   onNavigateToWallet,
@@ -274,6 +280,25 @@ export function GrowFollowersPage({
           way it would naturally.
         </p>
       </motion.div>
+
+      {locked && (
+        <div className="locked-banner" data-locked-banner>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="locked-banner-title">
+                Have a look around — ordering is locked
+              </p>
+              <p className="locked-banner-body">
+                Set up a growth plan and check the price. You'll need one-time
+                access before you can start.
+              </p>
+            </div>
+            <button type="button" onClick={() => onUnlock?.()} className="locked-banner-btn">
+              Unlock ordering
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* ================= LEFT: what you want ================= */}
@@ -522,16 +547,28 @@ export function GrowFollowersPage({
             )}
           </div>
 
-          <Button
-            variant="primary"
-            size="lg"
-            loading={busy}
-            disabled={busy || linkIsPost || total < minOrder}
-            onClick={handleStart}
-            className="font-extrabold"
-          >
-            Start growing
-          </Button>
+          {locked ? (
+            <Button
+              variant="primary"
+              size="lg"
+              data-unlock-cta
+              onClick={() => onUnlock?.()}
+              className="font-extrabold"
+            >
+              Unlock ordering
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              loading={busy}
+              disabled={busy || linkIsPost || total < minOrder}
+              onClick={handleStart}
+              className="font-extrabold"
+            >
+              Start growing
+            </Button>
+          )}
         </div>
 
         {error && (
