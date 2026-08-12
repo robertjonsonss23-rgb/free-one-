@@ -1237,3 +1237,37 @@ html.theme-ready body {
 }
 .dark .botscore-card .text-amber-900 { color: #fcd9a5; }
 .dark .botscore-card .text-amber-800 { color: #fbbf24; }
+
+/* ---- "Ordering locked" banner (New Order / Grow Followers) ----
+   Literal colours again: amber-50 + amber-900 get inverted by .dark into an
+   unreadable pair, which is exactly how the bot-score badge ended up at
+   1.08:1 earlier in this project. */
+.locked-banner {
+  border: 1px solid #fcd34d;
+  background-color: #fffbeb;
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+.locked-banner-title { font-size: 0.875rem; font-weight: 700; color: #713f12; }
+.locked-banner-body  { font-size: 0.75rem; color: #854d0e; margin-top: 0.125rem; }
+.locked-banner-btn {
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  background-color: #b45309;
+  color: #ffffff;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.locked-banner-btn:hover { background-color: #92400e; }
+
+.dark .locked-banner {
+  background-color: rgb(245 158 11 / 0.10);
+  border-color: rgb(245 158 11 / 0.35);
+}
+.dark .locked-banner-title { color: #fcd34d; }
+.dark .locked-banner-body  { color: #e8c88a; }
+.dark .locked-banner-btn   { background-color: #d97706; color: #1a1206; }
+.dark .locked-banner-btn:hover { background-color: #f59e0b; }
