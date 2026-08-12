@@ -34,7 +34,10 @@ type NavKey =
   | "grow-followers"
   | "orders"
   | "wallet"
-  | "referrals";
+  | "referrals"
+  /* Reached from the inline unlock prompt, not from the sidebar — it is a
+     checkout step, not a destination. */
+  | "unlock";
 
 const NAV_ITEMS: { key: NavKey; label: string; description: string }[] = [
   { key: "dashboard", label: "Dashboard", description: "Overview & analytics" },
@@ -163,6 +166,7 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
       saved === "dashboard" ||
       saved === "new-order" ||
       saved === "grow-followers" ||
+      saved === "unlock" ||
       saved === "orders" ||
       saved === "wallet" ||
       saved === "referrals"
@@ -417,19 +421,19 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
 
   const content = useMemo(() => {
     if (activePage === "new-order") {
-      if (orderPageLocked) {
-        return (
-          <PaywallPage
-            onUnlocked={() => { refreshOrderAccess(); }}
-            onBalanceChange={setBalance}
-            onGoToWallet={() => navigateToPage("wallet")}
-          />
-        );
-      }
+      /* The page itself is no longer swapped out for the paywall. A new
+         signup can explore the whole builder, price a campaign and see
+         exactly what they would get — they just cannot deploy it. Showing
+         the product beats showing a payment wall to someone who has not
+         decided yet. `locked` disables the deploy button and surfaces the
+         unlock prompt inline; the SERVER still refuses the order either
+         way, so this is presentation, not the security boundary. */
       return (
         <NewOrderPage
           orders={orders}
           isOwner={user.isOwner}
+          locked={orderPageLocked}
+          onUnlock={() => navigateToPage("unlock")}
           prefillOrder={cloneSourceOrder}
           onCreateOrder={(order) =>
             persistOrders((prev) => [order, ...prev])
@@ -445,19 +449,11 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     }
 
     if (activePage === "grow-followers") {
-      /* Same paywall as New Order: both spend money, so unlocking one
-         without the other would be a way around the gate. */
-      if (orderPageLocked) {
-        return (
-          <PaywallPage
-            onUnlocked={() => { refreshOrderAccess(); }}
-            onBalanceChange={setBalance}
-            onGoToWallet={() => navigateToPage("wallet")}
-          />
-        );
-      }
+      /* Same treatment as New Order: browsable, not orderable. */
       return (
         <GrowFollowersPage
+          locked={orderPageLocked}
+          onUnlock={() => navigateToPage("unlock")}
           onCreateOrder={(order) => persistOrders((prev) => [order, ...prev])}
           onNavigateToWallet={() => navigateToPage("wallet")}
           onBalanceChange={setBalance}
@@ -465,6 +461,36 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
             if (notice) setOrdersNotice(notice);
             navigateToPage("orders");
           }}
+        />
+      );
+    }
+
+    if (activePage === "unlock") {
+      /* Already unlocked (or the admin switched the paywall off) — nothing
+         to buy, so send them straight to the builder. */
+      if (!orderPageLocked) {
+        return (
+          <NewOrderPage
+            orders={orders}
+            isOwner={user.isOwner}
+            locked={false}
+            prefillOrder={cloneSourceOrder}
+            onCreateOrder={(order) => persistOrders((prev) => [order, ...prev])}
+            onNavigateToWallet={() => navigateToPage("wallet")}
+            onBalanceChange={setBalance}
+            onNavigateToOrders={(notice) => {
+              if (notice) setOrdersNotice(notice);
+              navigateToPage("orders");
+            }}
+          />
+        );
+      }
+      return (
+        <PaywallPage
+          onUnlocked={() => { refreshOrderAccess(); navigateToPage("new-order"); }}
+          onBalanceChange={setBalance}
+          onGoToWallet={() => navigateToPage("wallet")}
+          onBack={() => navigateToPage("new-order")}
         />
       );
     }
@@ -604,7 +630,13 @@ export default function App({ user, onSignOut, theme, onToggleTheme }: AppProps)
     refreshOrderAccess,
   ]);
 
-  const currentItem = NAV_ITEMS.find((item) => item.key === activePage)!;
+  /* "unlock" is intentionally absent from NAV_ITEMS, so fall back rather
+     than crash on the non-null assertion this used to make. */
+  const currentItem =
+    NAV_ITEMS.find((item) => item.key === activePage) ??
+    (activePage === "unlock"
+      ? { key: "unlock" as NavKey, label: "Unlock ordering", description: "One-time access" }
+      : NAV_ITEMS[0]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
