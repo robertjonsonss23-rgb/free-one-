@@ -12,6 +12,9 @@ import {
 interface PaywallPageProps {
   /** Called once access is confirmed, so the app can drop the gate. */
   onUnlocked: () => void;
+  /** Returns to the builder. This page is now a checkout step reached from
+      the New Order page, so there must be a way back out of it. */
+  onBack?: () => void;
   /** Keeps the header balance in sync after a wallet-funded unlock. */
   onBalanceChange?: (balance: number) => void;
   /** Lets the "top up first" button jump the user to the Wallet page. */
@@ -42,6 +45,7 @@ export function PaywallPage({
   onUnlocked,
   onBalanceChange,
   onGoToWallet,
+  onBack,
 }: PaywallPageProps) {
   // Re-render when the user switches display currency.
   useCurrency();
@@ -210,6 +214,17 @@ export function PaywallPage({
       animate={{ opacity: 1, y: 0 }}
       className="mx-auto max-w-3xl space-y-5"
     >
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          data-paywall-back
+          className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+        >
+          ← Back to the order builder
+        </button>
+      )}
+
       {/* ---- Hero ---- */}
       <Card>
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
