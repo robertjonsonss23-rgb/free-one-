@@ -100,6 +100,10 @@ interface NewOrderPageProps {
   orders: CreatedOrder[];
   /** Bot score is owner-only — customers never see it. */
   isOwner?: boolean;
+  /** Account hasn't unlocked ordering: browsable, but not deployable. */
+  locked?: boolean;
+  /** Sends the user to the unlock/checkout step. */
+  onUnlock?: () => void;
   prefillOrder?: CreatedOrder | null;
   activeRatios?: EngagementRatios;
   onCreateOrder: (order: CreatedOrder) => void;
@@ -155,6 +159,8 @@ function SectionTitle({
 export function NewOrderPage({
   orders,
   isOwner = false,
+  locked = false,
+  onUnlock,
   prefillOrder,
   activeRatios,
   onCreateOrder,
@@ -644,6 +650,33 @@ export function NewOrderPage({
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-3 py-4 sm:px-5 sm:py-6">
+      {/* ============ LOCKED NOTICE ============
+          Shown instead of replacing the page. The point is that a new
+          signup can see and price the whole product first; this explains
+          the one thing they cannot do yet, and how to fix it. */}
+      {locked && (
+        <div className="locked-banner" data-locked-banner>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="locked-banner-title">
+                Have a look around — ordering is locked
+              </p>
+              <p className="locked-banner-body">
+                Build a campaign, try the presets and check the price. You'll
+                need one-time access before you can deploy.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onUnlock?.()}
+              className="locked-banner-btn"
+            >
+              Unlock ordering
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ============ HERO HEADER (compact) ============ */}
       <motion.div
         initial={{ opacity: 0, y: -6 }}
@@ -1493,6 +1526,25 @@ export function NewOrderPage({
               )}
             </div>
 
+            {locked ? (
+              /* Locked accounts get a route to checkout instead of a dead
+                 button. The order itself is refused by the server anyway,
+                 so nothing here is load-bearing for security. */
+              <Button
+                variant="primary"
+                size="lg"
+                data-unlock-cta
+                className="text-sm font-extrabold shadow-lg shadow-indigo-500/40"
+                icon={
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                }
+                onClick={() => onUnlock?.()}
+              >
+                Unlock ordering
+              </Button>
+            ) : (
             <Button
               variant="primary"
               size="lg"
@@ -1730,6 +1782,7 @@ export function NewOrderPage({
             >
               {isCreatingOrder ? "Deploying..." : "Deploy mission"}
             </Button>
+            )}
           </div>
         </div>
       </div>
