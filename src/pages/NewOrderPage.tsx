@@ -585,19 +585,12 @@ export function NewOrderPage({
 
   /* Bot score. Owner-only, so it is not even computed for customers —
      no chance of it leaking into the DOM for someone to read. */
+  /* Scored on the VIEW curve alone — engagement toggles are irrelevant to
+     it, so they are not inputs and changing them cannot move the number. */
   const botScore = useMemo(() => {
     if (!isOwner || safePlan.runs.length === 0) return null;
-    return computeBotScore({
-      plan: safePlan,
-      totalViews,
-      active: {
-        likes: includeLikes, shares: includeShares, saves: includeSaves,
-        comments: includeComments, reposts: includeReposts,
-      },
-      repostsLabel: channels.find((c) => c.planKey === "reposts")?.label ?? "Reposts",
-    });
-  }, [isOwner, safePlan, totalViews, channels,
-      includeLikes, includeShares, includeSaves, includeComments, includeReposts]);
+    return computeBotScore({ plan: safePlan, totalViews });
+  }, [isOwner, safePlan, totalViews]);
 
   /* Ask the server to price this plan. Rates live behind the admin API key,
      so the maths happens server-side and only totals come back.
@@ -1219,73 +1212,91 @@ export function NewOrderPage({
       </Card>
 
       {/* ============ BOT SCORE (owner only) ============
-          Deliberately not shown to customers: it would either scare them off
-          a fine order or read as a promise we cannot make. This is a tool
-          for the operator to sanity-check a campaign before it runs. */}
+          Judges the VIEW DELIVERY CURVE only. Owner-only: to a customer it
+          would either frighten them off a fine order or read as a promise
+          we cannot make. */}
       {botScore && (
-        <div data-bot-score={botScore.score} data-bot-band={botScore.band}>
-          <Card padding="md" className="botscore-card">
-            <div className="flex flex-wrap items-start gap-4">
-              {/* Dial */}
-              <div className={`botscore-dial botscore-${botScore.band}`}>
-                <span className="botscore-value">{botScore.score}</span>
-                <span className="botscore-max">/100</span>
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="botscore-badge">Owner only</span>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    Bot score — {botScore.label}
-                  </h3>
-                </div>
-                <p className="mt-0.5 text-xs text-slate-600">
-                  {botScore.summary}{" "}
-                  <span className="text-slate-500">Higher means more bot-like.</span>
-                </p>
-
-                {/* Factor bars */}
-                <div className="botscore-factors mt-2.5 grid gap-1.5 sm:grid-cols-2">
-                  {botScore.factors.map((f) => (
-                    <div key={f.key} data-factor={f.key} className="flex items-center gap-2">
-                      <span className="w-32 shrink-0 truncate text-[10px] font-semibold text-slate-600">
-                        {f.label}
-                      </span>
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
-                        <div
-                          className={`h-full rounded-full botscore-bar-${
-                            f.score < 30 ? "ok" : f.score < 60 ? "warn" : "bad"
-                          }`}
-                          style={{ width: `${Math.max(3, f.score)}%` }}
-                        />
-                      </div>
-                      <span className="w-7 shrink-0 text-right text-[10px] font-bold tabular-nums text-slate-500">
-                        {f.score}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {botScore.advice.length > 0 && (
-                  <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                      To look more organic
-                    </p>
-                    <ul className="mt-1 space-y-0.5">
-                      {botScore.advice.map((a, i) => (
-                        <li key={i} className="text-[11px] text-amber-900">• {a}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                <p className="mt-2 text-[10px] text-slate-400">
-                  An estimate from the order settings, not a guarantee — the
-                  platforms don't publish how they detect this.
-                </p>
+        <div
+          className={`bsc bsc-${botScore.band}`}
+          data-bot-score={botScore.score}
+          data-bot-band={botScore.band}
+        >
+          {/* --- Header: score, verdict, sparkline --- */}
+          <div className="bsc-head">
+            <div className="bsc-gauge" aria-hidden="true">
+              <svg viewBox="0 0 120 120" className="bsc-ring">
+                <circle className="bsc-ring-track" cx="60" cy="60" r="52" />
+                <circle
+                  className="bsc-ring-fill"
+                  cx="60" cy="60" r="52"
+                  strokeDasharray={`${(botScore.score / 100) * 326.7} 326.7`}
+                />
+              </svg>
+              <div className="bsc-gauge-text">
+                <span className="bsc-num">{botScore.score}</span>
+                <span className="bsc-den">bot risk</span>
               </div>
             </div>
-          </Card>
+
+            <div className="bsc-headline">
+              <div className="bsc-tagrow">
+                <span className="bsc-owner">Owner only</span>
+                <span className="bsc-pill">{botScore.label}</span>
+              </div>
+              <p className="bsc-summary">{botScore.summary}</p>
+              <p className="bsc-scope">
+                Based on the view delivery curve — engagement isn't counted.
+              </p>
+            </div>
+
+            {/* Cumulative view curve: the thing being judged, drawn. */}
+            {botScore.curve.length > 1 && (
+              <div className="bsc-spark" title="Cumulative views over the campaign">
+                <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+                  <polyline
+                    className="bsc-spark-line"
+                    points={botScore.curve
+                      .map((v, i) =>
+                        `${(i / (botScore.curve.length - 1)) * 100},${40 - v * 36}`)
+                      .join(" ")}
+                  />
+                </svg>
+                <span className="bsc-spark-label">View curve</span>
+              </div>
+            )}
+          </div>
+
+          {/* --- Factor grid --- */}
+          <div className="bsc-grid">
+            {botScore.factors.map((f) => {
+              const tone = f.score < 25 ? "ok" : f.score < 60 ? "warn" : "bad";
+              return (
+                <div key={f.key} className={`bsc-factor bsc-${tone}`} data-factor={f.key}>
+                  <div className="bsc-factor-top">
+                    <span className="bsc-factor-name">{f.label}</span>
+                    <span className="bsc-factor-verdict">{f.verdict}</span>
+                  </div>
+                  <div className="bsc-track">
+                    <div className="bsc-fill" style={{ width: `${Math.max(4, f.score)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* --- What to change --- */}
+          {botScore.advice.length > 0 && (
+            <ul className="bsc-advice">
+              {botScore.advice.map((a, i) => (
+                <li key={i}>{a}</li>
+              ))}
+            </ul>
+          )}
+
+          <p className="bsc-foot">
+            An estimate from your delivery settings, not a guarantee — the
+            platforms don't publish how they detect this.
+          </p>
         </div>
       )}
 
