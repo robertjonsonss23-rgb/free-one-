@@ -1435,6 +1435,8 @@ export interface CryptoPack {
 
 export interface PaymentMethods {
   minDeposit: number;
+  /** Admin switch: show the bot score to ordinary customers. */
+  botScoreForUsers: boolean;
   upiEnabled: boolean;
   cryptoEnabled: boolean;
   upiMethods: UpiMethod[];
@@ -1478,11 +1480,26 @@ export async function fetchWallet(): Promise<WalletData> {
   };
 }
 
+/** Just the bot-score visibility switch. Public and unauthenticated: the
+    flag decides whether to RENDER a score the client computes itself, so
+    there is nothing sensitive here. Defaults to hidden if the call fails,
+    which keeps the safer behaviour on error. */
+export async function fetchBotScoreVisibility(): Promise<boolean> {
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/api/payment-methods`);
+    const payload = await parseOrThrow(response);
+    return payload.botScoreForUsers === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchPaymentMethods(): Promise<PaymentMethods> {
   const response = await fetch(`${BACKEND_BASE_URL}/api/payment-methods`);
   const payload = await parseOrThrow(response);
   return {
     minDeposit: Number(payload.minDeposit) || 50,
+    botScoreForUsers: payload.botScoreForUsers === true,
     upiEnabled: Boolean(payload.upiEnabled),
     cryptoEnabled: Boolean(payload.cryptoEnabled),
     upiMethods: (Array.isArray(payload.upiMethods) ? payload.upiMethods : []).map((m) => {
@@ -1614,6 +1631,8 @@ export interface AdminPaymentSettings {
   lowBalanceThreshold: number;
   /* ---- Orders display mask ---- */
   hideRunProblems: boolean;
+  /** Show the bot score to customers as well as owners. */
+  botScoreForUsers: boolean;
   pendingGraceMinutes: number;
   /* ---- Referral programme ---- */
   referralEnabled: boolean;
@@ -1794,6 +1813,7 @@ export async function fetchPaymentSettings(password: string): Promise<AdminPayme
     }),
     lowBalanceThreshold: Number(payload.lowBalanceThreshold) || 0,
     hideRunProblems: Boolean(payload.hideRunProblems),
+    botScoreForUsers: Boolean(payload.botScoreForUsers),
     pendingGraceMinutes: Number(payload.pendingGraceMinutes) || 15,
     referralEnabled: Boolean(payload.referralEnabled),
     referrerReward: Number(payload.referrerReward) || 0,
@@ -1825,6 +1845,7 @@ export async function savePaymentSettings(
     currencies: Array<{ code: string; symbol: string; inrPerUnit: number; isActive: boolean }>;
     lowBalanceThreshold: number;
     hideRunProblems: boolean;
+    botScoreForUsers: boolean;
     pendingGraceMinutes: number;
     referralEnabled: boolean;
     referrerReward: number;
@@ -1928,6 +1949,7 @@ export interface OrderAccessStatus {
 function emptyPaymentMethods(): PaymentMethods {
   return {
     minDeposit: 0,
+    botScoreForUsers: false,
     upiEnabled: false,
     cryptoEnabled: false,
     upiMethods: [],
@@ -1940,6 +1962,7 @@ function normalizePaymentBlock(raw: unknown): PaymentMethods {
   const o = (raw || {}) as Record<string, unknown>;
   return {
     minDeposit: Number(o.minDeposit) || 0,
+    botScoreForUsers: o.botScoreForUsers === true,
     upiEnabled: Boolean(o.upiEnabled),
     cryptoEnabled: Boolean(o.cryptoEnabled),
     upiMethods: (Array.isArray(o.upiMethods) ? o.upiMethods : []).map((m) => {
