@@ -261,10 +261,39 @@ export function computeBotScore({ plan, totalViews }: BotScoreInput): BotScoreRe
     severe: "This pattern would be obvious to the platform.",
   } as const;
 
-  const advice = factors
-    .filter((f) => f.score >= 35)
-    .sort((a, b) => b.score * b.weight - a.score * a.weight)
-    .map((f) => f.detail);
+  /* ---- Tips ----
+     The target is a score under 25 ("Looks organic"). Two cases:
+
+       - Something is actually wrong: name the worst offenders, worst first,
+         because fixing those is what moves the number.
+       - Nothing is wrong: still say something useful. A blank panel makes
+         the owner wonder whether it ran, and there is usually one setting
+         that would give more headroom.
+
+     Kept to three lines so it stays scannable. */
+  const problems = factors
+    .filter((f) => f.score >= 30)
+    .sort((a, b) => b.score * b.weight - a.score * a.weight);
+
+  let advice: string[];
+  if (problems.length > 0) {
+    advice = problems.slice(0, 3).map((f) => f.detail);
+    if (score >= 25) {
+      advice.push(
+        score >= 60
+          ? "Fixing the top item usually moves the score the most."
+          : "Clearing the items above should bring this under 25."
+      );
+    }
+  } else if (score >= 25) {
+    /* Under the per-factor threshold but the total is still mid-range —
+       nothing is individually broken, so suggest the general levers. */
+    advice = [
+      "Nothing is badly wrong — a longer delivery window and higher Random variance will edge this under 25.",
+    ];
+  } else {
+    advice = ["Already under 25. Keep the window wide and variance high on bigger orders to stay here."];
+  }
 
   /* Sparkline data: cumulative views, normalised 0–1. Cumulative rather
      than per-run because the growth curve is what a human recognises. */
