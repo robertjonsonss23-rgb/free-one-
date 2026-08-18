@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_ENGAGEMENT_RATIOS } from "../types/order";
 import {
   createSmmOrder,
+  fetchBotScoreVisibility,
   fetchPanelConfig,
   fetchQuote,
   PLATFORMS,
@@ -585,12 +586,26 @@ export function NewOrderPage({
 
   /* Bot score. Owner-only, so it is not even computed for customers —
      no chance of it leaking into the DOM for someone to read. */
+  /* Owners always see the score; everyone else only when the admin has
+     switched it on. Starts false so a slow or failed fetch shows nothing
+     rather than briefly flashing it to a customer. */
+  const [botScoreForUsers, setBotScoreForUsers] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchBotScoreVisibility()
+      .then((on) => { if (!cancelled) setBotScoreForUsers(on); })
+      .catch(() => { /* stays hidden */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const showBotScore = isOwner || botScoreForUsers;
+
   /* Scored on the VIEW curve alone — engagement toggles are irrelevant to
      it, so they are not inputs and changing them cannot move the number. */
   const botScore = useMemo(() => {
-    if (!isOwner || safePlan.runs.length === 0) return null;
+    if (!showBotScore || safePlan.runs.length === 0) return null;
     return computeBotScore({ plan: safePlan, totalViews });
-  }, [isOwner, safePlan, totalViews]);
+  }, [showBotScore, safePlan, totalViews]);
 
   /* Ask the server to price this plan. Rates live behind the admin API key,
      so the maths happens server-side and only totals come back.
@@ -1211,10 +1226,9 @@ export function NewOrderPage({
         />
       </Card>
 
-      {/* ============ BOT SCORE (owner only) ============
-          Judges the VIEW DELIVERY CURVE only. Owner-only: to a customer it
-          would either frighten them off a fine order or read as a promise
-          we cannot make. */}
+      {/* ============ BOT SCORE ============
+          Judges the VIEW DELIVERY CURVE only. Owners always see it;
+          customers only when the admin enables it in Admin → Payments. */}
       {botScore && (
         <div
           className={`bsc bsc-${botScore.band}`}
@@ -1240,7 +1254,9 @@ export function NewOrderPage({
 
             <div className="bsc-headline">
               <div className="bsc-tagrow">
-                <span className="bsc-owner">Owner only</span>
+                {isOwner && !botScoreForUsers && (
+                  <span className="bsc-owner">Owner only</span>
+                )}
                 <span className="bsc-pill">{botScore.label}</span>
               </div>
               <p className="bsc-summary">{botScore.summary}</p>
