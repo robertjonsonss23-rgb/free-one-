@@ -454,6 +454,7 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         currencies: payment.currencies,
         lowBalanceThreshold: payment.lowBalanceThreshold,
         hideRunProblems: payment.hideRunProblems,
+        botScoreForUsers: payment.botScoreForUsers,
         pendingGraceMinutes: payment.pendingGraceMinutes,
         referralEnabled: payment.referralEnabled,
         referrerReward: payment.referrerReward,
@@ -2124,6 +2125,46 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                       )}
                     </InfoBanner>
                   </div>
+                </div>
+
+                {/* ---- Bot score visibility ---- */}
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Show bot score to customers
+                      </h3>
+                      <p className="mt-0.5 max-w-xl text-sm text-slate-500">
+                        The bot score rates how natural a campaign&apos;s view
+                        delivery looks, and suggests how to improve it. Your
+                        owner accounts always see it — this decides whether
+                        ordinary customers do too.
+                      </p>
+                    </div>
+                    <label
+                      data-botscore-toggle
+                      className="flex shrink-0 items-center gap-2 text-sm font-medium text-slate-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={payment.botScoreForUsers}
+                        onChange={(e) => patchPayment({ botScoreForUsers: e.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                  </div>
+
+                  <InfoBanner kind={payment.botScoreForUsers ? "warning" : "info"}>
+                    {payment.botScoreForUsers ? (
+                      <>
+                        Customers can see the score on the New Order page. It
+                        helps them build safer campaigns, but a high number on
+                        a perfectly good order may put some people off.
+                      </>
+                    ) : (
+                      <>Only owner accounts can see the bot score right now.</>
+                    )}
+                  </InfoBanner>
                 </div>
 
                 {/* ---- Referral programme ---- */}
