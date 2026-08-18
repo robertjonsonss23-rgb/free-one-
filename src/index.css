@@ -1279,49 +1279,30 @@ html.theme-ready body {
   text-transform: uppercase; color: #6b7a90;
 }
 
-/* ---- factor grid ---- */
-.bsc-grid {
-  margin-top: 0.85rem;
-  display: grid; gap: 0.5rem 1.1rem;
-  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
-}
-.bsc-factor-top {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 0.4rem;
-}
-.bsc-factor-name { font-size: 11px; font-weight: 700; color: #475569; }
-.dark .bsc-factor-name { color: #b6c2d4; }
-.bsc-factor-verdict { font-size: 10px; font-weight: 600; }
-.bsc-ok   .bsc-factor-verdict { color: #047857; }
-.bsc-warn .bsc-factor-verdict { color: #b45309; }
-.bsc-bad  .bsc-factor-verdict { color: #b91c1c; }
-.dark .bsc-ok   .bsc-factor-verdict { color: #34d399; }
-.dark .bsc-warn .bsc-factor-verdict { color: #fbbf24; }
-.dark .bsc-bad  .bsc-factor-verdict { color: #f87171; }
-
-.bsc-track {
-  margin-top: 3px; height: 4px; border-radius: 999px;
-  background: rgb(148 163 184 / 0.25); overflow: hidden;
-}
-.bsc-fill { height: 100%; border-radius: 999px; transition: width 0.35s ease; }
-.bsc-ok   .bsc-fill { background: #059669; }
-.bsc-warn .bsc-fill { background: #d97706; }
-.bsc-bad  .bsc-fill { background: #dc2626; }
-
-/* ---- advice ---- */
-.bsc-advice {
-  margin-top: 0.8rem; padding: 0.55rem 0.75rem;
-  border-radius: 0.5rem; background: var(--bsc-soft);
+/* ---- tips: how to get under 25 ---- */
+.bsc-tips {
+  margin-top: 0.85rem; padding: 0.6rem 0.8rem;
+  border-radius: 0.5rem;
+  background: var(--bsc-soft);
   border: 1px solid var(--bsc);
-  list-style: none;
 }
-.bsc-advice li {
-  font-size: 11.5px; color: #334155; padding-left: 0.85rem; position: relative;
+.dark .bsc-tips { border-color: var(--bsc-ink, var(--bsc)); }
+.bsc-tips-head {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--bsc-ink, var(--bsc));
+  margin-bottom: 4px;
 }
-.bsc-advice li + li { margin-top: 3px; }
-.bsc-advice li::before {
-  content: "→"; position: absolute; left: 0; color: var(--bsc); font-weight: 700;
+.bsc-tips ul { list-style: none; margin: 0; padding: 0; }
+.bsc-tips li {
+  font-size: 11.5px; color: #334155; padding-left: 0.9rem; position: relative;
+  line-height: 1.45;
 }
-.dark .bsc-advice li { color: #d3dced; }
+.bsc-tips li + li { margin-top: 3px; }
+.bsc-tips li::before {
+  content: "→"; position: absolute; left: 0;
+  color: var(--bsc-ink, var(--bsc)); font-weight: 700;
+}
+.dark .bsc-tips li { color: #d3dced; }
 
 .bsc-foot { margin-top: 0.6rem; font-size: 10px; color: #6b7a90; }
 
