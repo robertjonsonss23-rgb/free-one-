@@ -1234,7 +1234,7 @@ export function NewOrderPage({
               </svg>
               <div className="bsc-gauge-text">
                 <span className="bsc-num">{botScore.score}</span>
-                <span className="bsc-den">bot risk</span>
+                <span className="bsc-den">bot score</span>
               </div>
             </div>
 
@@ -1266,31 +1266,20 @@ export function NewOrderPage({
             )}
           </div>
 
-          {/* --- Factor grid --- */}
-          <div className="bsc-grid">
-            {botScore.factors.map((f) => {
-              const tone = f.score < 25 ? "ok" : f.score < 60 ? "warn" : "bad";
-              return (
-                <div key={f.key} className={`bsc-factor bsc-${tone}`} data-factor={f.key}>
-                  <div className="bsc-factor-top">
-                    <span className="bsc-factor-name">{f.label}</span>
-                    <span className="bsc-factor-verdict">{f.verdict}</span>
-                  </div>
-                  <div className="bsc-track">
-                    <div className="bsc-fill" style={{ width: `${Math.max(4, f.score)}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* --- What to change --- */}
+          {/* --- How to get under 25 ---
+              Always rendered: an empty panel reads as "did it run?", and
+              there is always at least one useful thing to say. */}
           {botScore.advice.length > 0 && (
-            <ul className="bsc-advice">
-              {botScore.advice.map((a, i) => (
-                <li key={i}>{a}</li>
-              ))}
-            </ul>
+            <div className="bsc-tips">
+              <p className="bsc-tips-head">
+                {botScore.score < 25 ? "Staying under 25" : "How to get under 25"}
+              </p>
+              <ul>
+                {botScore.advice.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <p className="bsc-foot">
