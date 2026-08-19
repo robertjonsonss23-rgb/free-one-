@@ -2225,6 +2225,167 @@ export interface PanelBalance {
   isLow: boolean;
 }
 
+/* ---- Failure diagnostics ---- */
+export interface FailureIssue {
+  key: string;
+  title: string;
+  cause: string;
+  fix: string;
+  severity: "critical" | "warning" | "info";
+  scope: string;
+  serviceId: string;
+  panelName: string;
+  panelId: string;
+  metric: string;
+  platform: string;
+  failedRuns: number;
+  affectedOrders: number;
+  sampleError: string;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  runIds: string[];
+}
+export interface FailureReport {
+  windowDays: number;
+  totalFailed: number;
+  totalRuns: number;
+  failureRate: number;
+  stuckRuns: number;
+  issues: FailureIssue[];
+}
+
+export async function fetchFailureReport(
+  password: string,
+  days = 7
+): Promise<FailureReport> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/failures?days=${days}`, {
+    headers: { "x-admin-password": password },
+  });
+  const p = await parseOrThrow(response);
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return {
+    windowDays: num(p.windowDays) || days,
+    totalFailed: num(p.totalFailed),
+    totalRuns: num(p.totalRuns),
+    failureRate: num(p.failureRate),
+    stuckRuns: num(p.stuckRuns),
+    issues: (Array.isArray(p.issues) ? p.issues : []).map((raw) => {
+      const o = raw as Record<string, unknown>;
+      const sev = String(o.severity ?? "warning");
+      return {
+        key: String(o.key ?? ""),
+        title: String(o.title ?? ""),
+        cause: String(o.cause ?? ""),
+        fix: String(o.fix ?? ""),
+        severity: (sev === "critical" || sev === "info" ? sev : "warning") as
+          FailureIssue["severity"],
+        scope: String(o.scope ?? ""),
+        serviceId: String(o.serviceId ?? ""),
+        panelName: String(o.panelName ?? ""),
+        panelId: String(o.panelId ?? ""),
+        metric: String(o.metric ?? ""),
+        platform: String(o.platform ?? ""),
+        failedRuns: num(o.failedRuns),
+        affectedOrders: num(o.affectedOrders),
+        sampleError: String(o.sampleError ?? ""),
+        firstSeen: typeof o.firstSeen === "string" ? o.firstSeen : null,
+        lastSeen: typeof o.lastSeen === "string" ? o.lastSeen : null,
+        runIds: Array.isArray(o.runIds) ? o.runIds.map(String) : [],
+      };
+    }),
+  };
+}
+
+export async function retryFailedRuns(
+  password: string,
+  runIds: string[]
+): Promise<number> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/failures/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": password },
+    body: JSON.stringify({ runIds }),
+  });
+  const p = await parseOrThrow(response);
+  return Number(p.requeued) || 0;
+}
+
+/* ---- Profit report ---- */
+export interface ProfitPlatformRow {
+  revenue: number;
+  cost: number;
+  profit: number;
+  orders: number;
+}
+export interface ProfitDay {
+  date: string;
+  revenue: number;
+  cost: number;
+  profit: number;
+  orders: number;
+}
+export interface ProfitReport {
+  windowDays: number | null;
+  orders: number;
+  /** Net of refunds — what customers actually kept paying. */
+  revenue: number;
+  /** What the SMM panels charged, recorded when each order was placed. */
+  cost: number;
+  profit: number;
+  margin: number;
+  refunded: number;
+  /** Revenue from orders placed before cost tracking existed. */
+  unpricedRevenue: number;
+  /** Real money taken in via approved deposits. */
+  deposited: number;
+  /** Unspent customer credit — owed, not earned. */
+  walletLiability: number;
+  byPlatform: Partial<Record<Platform, ProfitPlatformRow>>;
+  daily: ProfitDay[];
+}
+
+export async function fetchProfitReport(
+  password: string,
+  days?: number
+): Promise<ProfitReport> {
+  const qs = days && days > 0 ? `?days=${days}` : "";
+  const response = await fetch(`${BACKEND_BASE_URL}/api/admin/profit${qs}`, {
+    headers: { "x-admin-password": password },
+  });
+  const p = await parseOrThrow(response);
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const rows = (p.byPlatform || {}) as Record<string, Record<string, unknown>>;
+  const byPlatform: Partial<Record<Platform, ProfitPlatformRow>> = {};
+  for (const key of PLATFORMS) {
+    const r = rows[key];
+    if (!r) continue;
+    byPlatform[key] = {
+      revenue: num(r.revenue), cost: num(r.cost),
+      profit: num(r.profit), orders: num(r.orders),
+    };
+  }
+  return {
+    windowDays: p.windowDays === null || p.windowDays === undefined ? null : num(p.windowDays),
+    orders: num(p.orders),
+    revenue: num(p.revenue),
+    cost: num(p.cost),
+    profit: num(p.profit),
+    margin: num(p.margin),
+    refunded: num(p.refunded),
+    unpricedRevenue: num(p.unpricedRevenue),
+    deposited: num(p.deposited),
+    walletLiability: num(p.walletLiability),
+    byPlatform,
+    daily: (Array.isArray(p.daily) ? p.daily : []).map((d) => {
+      const o = d as Record<string, unknown>;
+      return {
+        date: String(o.date ?? ""),
+        revenue: num(o.revenue), cost: num(o.cost),
+        profit: num(o.profit), orders: num(o.orders),
+      };
+    }),
+  };
+}
+
 export async function fetchPanelBalances(
   password: string,
   refresh = false
