@@ -1339,3 +1339,110 @@ html.theme-ready body {
 .dark .locked-banner-body  { color: #e8c88a; }
 .dark .locked-banner-btn   { background-color: #d97706; color: #1a1206; }
 .dark .locked-banner-btn:hover { background-color: #f59e0b; }
+
+/* ---- Profit tab (Admin) ----
+   Literal colours: .dark remaps Tailwind's colour vars, which has produced
+   unreadable text repeatedly in this project. Money figures must never be
+   ambiguous, so both themes are pinned explicitly. */
+.pf-card {
+  border: 1px solid rgb(148 163 184 / 0.30);
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: #ffffff;
+}
+.dark .pf-card { background: #10151f; border-color: rgb(148 163 184 / 0.22); }
+.pf-card-strong { border-width: 2px; border-color: #059669; }
+.dark .pf-card-strong { border-color: #34d399; }
+
+.pf-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #6b7a90;
+}
+.pf-value {
+  margin-top: 2px; font-size: 1.55rem; font-weight: 800;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.pf-in  { color: #047857; }
+.pf-out { color: #b45309; }
+.dark .pf-in  { color: #34d399; }
+.dark .pf-out { color: #fbbf24; }
+.pf-note { margin-top: 2px; font-size: 11px; color: #6b7a90; }
+
+.pf-mini {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
+  border-radius: 0.5rem; padding: 0.5rem 0.7rem;
+  background: rgb(148 163 184 / 0.10);
+}
+.pf-mini-label { font-size: 11px; font-weight: 600; color: #6b7a90; }
+.pf-mini-value {
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: #334155;
+}
+.dark .pf-mini-value { color: #d3dced; }
+
+/* ---- Health tab: one card per real problem ----
+   Literal colours; .dark remaps Tailwind's colour vars and has produced
+   unreadable text repeatedly in this codebase. */
+.hz {
+  border: 1px solid rgb(148 163 184 / 0.30);
+  border-left: 4px solid #94a3b8;
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: #ffffff;
+}
+.dark .hz { background: #10151f; border-color: rgb(148 163 184 / 0.22); }
+.hz-critical { border-left-color: #b91c1c; }
+.hz-warning  { border-left-color: #b45309; }
+.hz-info     { border-left-color: #0e7490; }
+.dark .hz-critical { border-left-color: #f87171; }
+.dark .hz-warning  { border-left-color: #fbbf24; }
+.dark .hz-info     { border-left-color: #22d3ee; }
+
+.hz-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.hz-sev {
+  border-radius: 999px; padding: 2px 9px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: #ffffff; white-space: nowrap;
+}
+.hz-sev-critical { background: #b91c1c; }
+.hz-sev-warning  { background: #b45309; }
+.hz-sev-info     { background: #0e7490; }
+.hz-title { font-size: 14px; font-weight: 700; color: #1e293b; }
+.dark .hz-title { color: #e6ecf6; }
+
+.hz-cause { margin-top: 5px; font-size: 12.5px; color: #475569; line-height: 1.5; }
+.dark .hz-cause { color: #b6c2d4; }
+
+.hz-fix {
+  margin-top: 8px; padding: 0.5rem 0.7rem;
+  border-radius: 0.5rem; background: rgb(5 150 105 / 0.08);
+  border: 1px solid rgb(5 150 105 / 0.35);
+}
+.dark .hz-fix { background: rgb(52 211 153 / 0.08); border-color: rgb(52 211 153 / 0.30); }
+.hz-fix-label {
+  display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #047857;
+}
+.dark .hz-fix-label { color: #34d399; }
+.hz-fix-text { margin-top: 2px; font-size: 12.5px; color: #14532d; line-height: 1.45; }
+.dark .hz-fix-text { color: #d7f5e6; }
+
+.hz-meta {
+  margin-top: 8px; display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem;
+  font-size: 11px; color: #6b7a90;
+}
+.hz-meta strong { color: #334155; font-variant-numeric: tabular-nums; }
+.dark .hz-meta strong { color: #d3dced; }
+
+.hz-actions {
+  margin-top: 8px; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+}
+.hz-raw summary {
+  cursor: pointer; font-size: 11px; color: #6b7a90; user-select: none;
+}
+.hz-raw code {
+  display: block; margin-top: 4px; padding: 0.35rem 0.5rem;
+  border-radius: 0.35rem; background: rgb(148 163 184 / 0.14);
+  font-size: 11px; color: #334155; word-break: break-word;
+}
+.dark .hz-raw code { color: #d3dced; }
