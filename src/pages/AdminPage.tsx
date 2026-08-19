@@ -29,6 +29,11 @@ import {
   setUserOrderAccess,
   sendTelegramTest,
   fetchPanelBalances,
+  fetchProfitReport,
+  fetchFailureReport,
+  retryFailedRuns,
+  type ProfitReport,
+  type FailureReport,
   runBalanceCheck,
   type PanelBalance,
   fetchAdminDeposits,
@@ -93,7 +98,19 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "danger"; msg: string } | null>(null);
 
-  const [tab, setTab] = useState<"panels" | "services" | "payments" | "paywall" | "users">("panels");
+  const [tab, setTab] = useState<"panels" | "services" | "payments" | "profit" | "health" | "paywall" | "users">("panels");
+
+  // Failure diagnostics
+  const [failures, setFailures] = useState<FailureReport | null>(null);
+  const [failLoading, setFailLoading] = useState(false);
+  const [failError, setFailError] = useState("");
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  // Profit report
+  const [profit, setProfit] = useState<ProfitReport | null>(null);
+  const [profitDays, setProfitDays] = useState<number>(0);   // 0 = all time
+  const [profitLoading, setProfitLoading] = useState(false);
+  const [profitError, setProfitError] = useState("");
 
   // Payments
   const [deposits, setDeposits] = useState<AdminDeposit[]>([]);
@@ -149,6 +166,43 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
     }
     setSlots(next);
   }, []);
+
+  const loadProfit = useCallback(async (pw: string, days: number) => {
+    setProfitLoading(true);
+    setProfitError("");
+    try {
+      setProfit(await fetchProfitReport(pw, days));
+    } catch (e) {
+      setProfitError(e instanceof Error ? e.message : "Could not load the profit report.");
+    } finally {
+      setProfitLoading(false);
+    }
+  }, []);
+
+  const loadFailures = useCallback(async (pw: string) => {
+    setFailLoading(true);
+    setFailError("");
+    try {
+      setFailures(await fetchFailureReport(pw, 7));
+    } catch (e) {
+      setFailError(e instanceof Error ? e.message : "Could not load the health report.");
+    } finally {
+      setFailLoading(false);
+    }
+  }, []);
+
+  const handleRetry = async (issueKey: string, runIds: string[]) => {
+    setRetrying(issueKey);
+    try {
+      const n = await retryFailedRuns(password, runIds);
+      fireToast("success", `${n} run${n === 1 ? "" : "s"} queued to run again.`);
+      await loadFailures(password);
+    } catch (e) {
+      fireToast("danger", e instanceof Error ? e.message : "Retry failed.");
+    } finally {
+      setRetrying(null);
+    }
+  };
 
   const loadConfig = useCallback(async (pw: string) => {
     applyConfig(await fetchAdminPanelConfig(pw));
@@ -848,8 +902,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 space-y-5">
-        <div className="grid w-full max-w-2xl grid-cols-5 gap-1 rounded-lg bg-slate-200/70 p-1">
-          {(["panels", "services", "payments", "paywall", "users"] as const).map((key) => (
+        <div className="grid w-full max-w-4xl grid-cols-4 gap-1 rounded-lg bg-slate-200/70 p-1 sm:grid-cols-7">
+          {(["panels", "services", "payments", "profit", "health", "paywall", "users"] as const).map((key) => (
             <button
               key={key}
               type="button"
@@ -857,6 +911,8 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
                 setTab(key);
                 if (key === "users" && users.length === 0) loadUsers();
                 if (key === "panels" && balances.length === 0) loadBalances(password);
+                if (key === "profit") loadProfit(password, profitDays);
+                if (key === "health") loadFailures(password);
                 if (key === "payments") {
                   loadDeposits(password, depositFilter, "wallet");
                   if (!payment) loadPaymentSettings(password);
@@ -1250,6 +1306,302 @@ export function AdminPage({ theme, onToggleTheme }: AdminPageProps) {
         )}
 
         {/* ============ PAYMENTS ============ */}
+        {/* ============ PROFIT ============ */}
+        {/* ============ HEALTH ============ */}
+        {tab === "health" && (
+          <Card>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Health</h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Anything that failed in the last 7 days, why it failed, and
+                  what to do about it. Identical failures are grouped, so each
+                  row is one real problem.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" loading={failLoading}
+                      onClick={() => loadFailures(password)}>
+                Refresh
+              </Button>
+            </div>
+
+            {failError && <InfoBanner kind="danger">{failError}</InfoBanner>}
+            {!failures && failLoading && (
+              <div className="flex justify-center py-10"><Spinner /></div>
+            )}
+
+            {failures && (
+              <>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="pf-card" data-health="rate">
+                    <p className="pf-label">Failure rate</p>
+                    <p className={`pf-value ${failures.failureRate > 5 ? "pf-out" : "pf-in"}`}>
+                      {failures.failureRate}%
+                    </p>
+                    <p className="pf-note">
+                      {failures.totalFailed.toLocaleString()} of{" "}
+                      {failures.totalRuns.toLocaleString()} runs
+                    </p>
+                  </div>
+                  <div className="pf-card" data-health="issues">
+                    <p className="pf-label">Distinct problems</p>
+                    <p className={`pf-value ${failures.issues.length > 0 ? "pf-out" : "pf-in"}`}>
+                      {failures.issues.length}
+                    </p>
+                    <p className="pf-note">grouped by cause &amp; service</p>
+                  </div>
+                  <div className="pf-card" data-health="stuck">
+                    <p className="pf-label">Stuck runs</p>
+                    <p className={`pf-value ${failures.stuckRuns > 0 ? "pf-out" : "pf-in"}`}>
+                      {failures.stuckRuns}
+                    </p>
+                    <p className="pf-note">overdue by 30+ minutes</p>
+                  </div>
+                </div>
+
+                {failures.issues.length === 0 ? (
+                  <div className="mt-4">
+                    <InfoBanner kind="success">
+                      Nothing has failed in the last 7 days.
+                    </InfoBanner>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {failures.issues.map((iss) => (
+                      <div
+                        key={iss.key}
+                        data-issue={iss.key}
+                        data-severity={iss.severity}
+                        className={`hz hz-${iss.severity}`}
+                      >
+                        <div className="hz-head">
+                          <span className={`hz-sev hz-sev-${iss.severity}`}>
+                            {iss.severity === "critical" ? "Fix now"
+                              : iss.severity === "warning" ? "Look into it"
+                              : "Usually fine"}
+                          </span>
+                          <h3 className="hz-title">{iss.title}</h3>
+                        </div>
+
+                        <p className="hz-cause">{iss.cause}</p>
+
+                        <div className="hz-fix">
+                          <span className="hz-fix-label">Do this</span>
+                          <p className="hz-fix-text">{iss.fix}</p>
+                        </div>
+
+                        <div className="hz-meta">
+                          {iss.serviceId && (
+                            <span>Service <strong>{iss.serviceId}</strong></span>
+                          )}
+                          <span>Panel <strong>{iss.panelName}</strong></span>
+                          {iss.metric && <span>Metric <strong>{iss.metric}</strong></span>}
+                          <span><strong>{iss.failedRuns}</strong> failed run{iss.failedRuns === 1 ? "" : "s"}</span>
+                          <span><strong>{iss.affectedOrders}</strong> order{iss.affectedOrders === 1 ? "" : "s"} hit</span>
+                          {iss.lastSeen && (
+                            <span>Last {new Date(iss.lastSeen).toLocaleString()}</span>
+                          )}
+                        </div>
+
+                        <div className="hz-actions">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            loading={retrying === iss.key}
+                            disabled={iss.runIds.length === 0}
+                            onClick={() => handleRetry(iss.key, iss.runIds)}
+                          >
+                            Retry these runs
+                          </Button>
+                          <details className="hz-raw">
+                            <summary>Provider&apos;s exact message</summary>
+                            <code>{iss.sampleError || "(empty)"}</code>
+                          </details>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        )}
+
+        {tab === "profit" && (
+          <>
+            <Card>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">Profit</h2>
+                  <p className="mt-0.5 text-sm text-slate-500">
+                    What customers paid, what the panels charged you, and what
+                    is left. Costs are recorded when each order is placed, so
+                    changing your markup never rewrites past figures.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {([[0, "All time"], [7, "7 days"], [30, "30 days"], [90, "90 days"]] as const).map(
+                    ([d, label]) => (
+                      <button
+                        key={d}
+                        type="button"
+                        aria-pressed={profitDays === d}
+                        data-range={d}
+                        onClick={() => { setProfitDays(d); loadProfit(password, d); }}
+                        className="platform-filter"
+                      >
+                        {label}
+                      </button>
+                    )
+                  )}
+                  <Button variant="ghost" size="sm" loading={profitLoading}
+                          onClick={() => loadProfit(password, profitDays)}>
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+
+              {profitError && <InfoBanner kind="danger">{profitError}</InfoBanner>}
+
+              {!profit && profitLoading && (
+                <div className="flex justify-center py-10"><Spinner /></div>
+              )}
+
+              {profit && (
+                <>
+                  {/* Headline figures */}
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="pf-card" data-metric="revenue">
+                      <p className="pf-label">You received</p>
+                      <p className="pf-value pf-in">₹{profit.revenue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="pf-note">from {profit.orders.toLocaleString()} order{profit.orders === 1 ? "" : "s"}, after refunds</p>
+                    </div>
+                    <div className="pf-card" data-metric="cost">
+                      <p className="pf-label">You spent on panels</p>
+                      <p className="pf-value pf-out">₹{profit.cost.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="pf-note">what the providers charged you</p>
+                    </div>
+                    <div className="pf-card pf-card-strong" data-metric="profit">
+                      <p className="pf-label">Profit</p>
+                      <p className={`pf-value ${profit.profit >= 0 ? "pf-in" : "pf-out"}`}>
+                        ₹{profit.profit.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="pf-note">{profit.margin}% margin</p>
+                    </div>
+                  </div>
+
+                  {/* Secondary figures */}
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <div className="pf-mini">
+                      <span className="pf-mini-label">Deposits taken</span>
+                      <span className="pf-mini-value">₹{profit.deposited.toLocaleString("en-IN")}</span>
+                    </div>
+                    <div className="pf-mini">
+                      <span className="pf-mini-label">Refunded</span>
+                      <span className="pf-mini-value">₹{profit.refunded.toLocaleString("en-IN")}</span>
+                    </div>
+                    <div className="pf-mini">
+                      <span className="pf-mini-label">Unspent customer credit</span>
+                      <span className="pf-mini-value">₹{profit.walletLiability.toLocaleString("en-IN")}</span>
+                    </div>
+                  </div>
+
+                  {profit.unpricedRevenue > 0 && (
+                    <div className="mt-3">
+                      <InfoBanner kind="warning">
+                        ₹{profit.unpricedRevenue.toLocaleString("en-IN")} of this revenue
+                        came from orders placed before cost tracking existed. Their
+                        panel cost is unknown, so the profit above is
+                        <strong> higher than reality</strong> by whatever those cost.
+                        New orders are all tracked.
+                      </InfoBanner>
+                    </div>
+                  )}
+
+                  {/* Per platform */}
+                  {Object.keys(profit.byPlatform).length > 0 && (
+                    <div className="mt-5">
+                      <h3 className="mb-2 text-sm font-semibold text-slate-900">By platform</h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="text-xs uppercase tracking-wider text-slate-500">
+                            <tr>
+                              <th className="pb-2 pr-3 font-medium">Platform</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Orders</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Received</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Spent</th>
+                              <th className="pb-2 text-right font-medium">Profit</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {PLATFORMS.filter((pf) => profit.byPlatform[pf]).map((pf) => {
+                              const r = profit.byPlatform[pf]!;
+                              return (
+                                <tr key={pf} data-platform-row={pf}>
+                                  <td className="py-2 pr-3">
+                                    <span className={`platform-badge platform-badge-${pf}`}>
+                                      {PLATFORM_LABELS[pf]}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 pr-3 text-right tabular-nums text-slate-600">{r.orders}</td>
+                                  <td className="py-2 pr-3 text-right tabular-nums text-slate-700">₹{r.revenue.toLocaleString("en-IN")}</td>
+                                  <td className="py-2 pr-3 text-right tabular-nums text-slate-700">₹{r.cost.toLocaleString("en-IN")}</td>
+                                  <td className={`py-2 text-right font-semibold tabular-nums ${r.profit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                                    ₹{r.profit.toLocaleString("en-IN")}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent days */}
+                  {profit.daily.length > 0 && (
+                    <div className="mt-5">
+                      <h3 className="mb-2 text-sm font-semibold text-slate-900">Recent days</h3>
+                      <div className="max-h-64 overflow-y-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="sticky top-0 bg-white text-xs uppercase tracking-wider text-slate-500">
+                            <tr>
+                              <th className="pb-2 pr-3 font-medium">Date</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Orders</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Received</th>
+                              <th className="pb-2 pr-3 text-right font-medium">Spent</th>
+                              <th className="pb-2 text-right font-medium">Profit</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {profit.daily.slice().reverse().map((d) => (
+                              <tr key={d.date}>
+                                <td className="py-1.5 pr-3 tabular-nums text-slate-600">{d.date}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{d.orders}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums text-slate-700">₹{d.revenue.toLocaleString("en-IN")}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums text-slate-700">₹{d.cost.toLocaleString("en-IN")}</td>
+                                <td className={`py-1.5 text-right font-semibold tabular-nums ${d.profit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                                  ₹{d.profit.toLocaleString("en-IN")}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {profit.orders === 0 && (
+                    <p className="py-6 text-center text-sm text-slate-500">
+                      No orders in this period yet.
+                    </p>
+                  )}
+                </>
+              )}
+            </Card>
+          </>
+        )}
+
         {tab === "payments" && (
           <>
             {/* ---- Deposit queue ---- */}
